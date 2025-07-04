@@ -1,0 +1,283 @@
+{
+    "$schema": "https://raw.githubusercontent.com/irensaltali/serverlessapigateway/refs/heads/main/src/api-config.schema.json",
+    "title": "API Gateway Config",
+    "description": "Configuration for the Magic QR Link",
+    "servers": [
+        {
+            "alias": "serverlessapigateway-api",
+            "url": "https://74ec-2a02-e0-665f-2400-4803-52e0-7bcf-8789.ngrok-free.app"
+        }
+    ],
+    "services": [
+        {
+            "alias": "endpoint1",
+            "entrypoint": "./services/endpoint1"
+        }
+    ],
+    "serviceBindings": [
+        {
+            "alias": "link_service",
+            "binding": "LINK_SERVICE"
+        },
+        {
+            "alias": "account_service",
+            "binding": "ACCOUNT_SERVICE"
+        },
+        {
+            "alias": "analytics_service",
+            "binding": "ANALYTICS_SERVICE"
+        },
+        {
+            "alias": "subscription_service",
+            "binding": "SUBSCRIPTION_SERVICE"
+        }
+    ],
+    "cors": {
+        "allow_origins": [
+            "https://magicqrlink.com",
+            "https://api-staging.magicqrlink.com",
+            "https://api.magicqrlink.com",
+            "https://magicqrlink-test.irensaltali.workers.dev"
+        ],
+        "allow_methods": [
+            "GET",
+            "POST",
+            "PUT",
+            "DELETE",
+            "OPTIONS"
+        ],
+        "allow_headers": [
+            "*"
+        ],
+        "expose_headers": [
+            "*"
+        ],
+        "allow_credentials": true,
+        "max_age": 3600
+    },
+    "authorizer": {
+        "type": "auth0",
+        "domain": "$env.AUTH0_DOMAIN",
+        "client_id": "$env.AUTH0_CLIENT_ID",
+        "client_secret": "$secrets.AUTH0_CLIENT_SECRET",
+        "redirect_uri": "$env.AUTH0_REDIRECT_URI",
+        "jwks": "$secrets.AUTH0_JWKS",
+        "scope": "openid profile email offline_access"
+    },
+    "variables": {
+        "global_variable": "global_variable_value"
+    },
+    "paths": [
+        {
+            "method": "GET",
+            "path": "/v1/auth/callback",
+            "integration": {
+                "type": "auth0_callback"
+            }
+        },
+        {
+            "method": "GET",
+            "path": "/v1/auth/login",
+            "integration": {
+                "type": "auth0_callback_redirect"
+            },
+            "auth": false
+        },
+        {
+            "method": "GET",
+            "path": "/v1/auth/profile",
+            "integration": {
+                "type": "auth0_userinfo"
+            },
+            "auth": true
+        },
+        {
+            "method": "GET",
+            "path": "/v1/auth/refresh",
+            "integration": {
+                "type": "auth0_refresh"
+            },
+            "auth": false
+        },
+        {
+            "method": "POST",
+            "path": "/v1/auth/webhook/post-user-registration",
+            "integration": {
+                "type": "service_binding",
+                "binding": "account_service",
+                "function": "handleAuth0WebhookPostUserRegistration"
+            },
+            "auth": false
+        },
+        {
+            "method": "GET",
+            "path": "/v1/user",
+            "integration": {
+                "type": "service_binding",
+                "binding": "account_service",
+                "function": "getUser"
+            },
+            "auth": true
+        },
+        {
+            "method": "GET",
+            "path": "/v1/account/{id}",
+            "integration": {
+                "type": "service_binding",
+                "binding": "account_service",
+                "function": "getAccount"
+            },
+            "auth": true
+        },
+        {
+            "method": "POST",
+            "path": "/v1/account/{id}",
+            "integration": {
+                "type": "service_binding",
+                "binding": "account_service",
+                "function": "updateAccount"
+            },
+            "auth": true
+        },
+        {
+            "method": "POST",
+            "path": "/v1/account/webhook/supabase",
+            "integration": {
+                "type": "service_binding",
+                "binding": "account_service",
+                "function": "handleUserAccountInsertWebook"
+            },
+            "auth": false
+        },
+        {
+            "method": "POST",
+            "path": "/v1/link",
+            "integration": {
+                "type": "service_binding",
+                "binding": "link_service",
+                "function": "saveLink"
+            },
+            "auth": true
+        },
+        {
+            "method": "GET",
+            "path": "/v1/link/check-key",
+            "integration": {
+                "type": "service_binding",
+                "binding": "link_service",
+                "function": "isUniqueKey"
+            },
+            "auth": true
+        },
+        {
+            "method": "GET",
+            "path": "/v1/link",
+            "integration": {
+                "type": "service_binding",
+                "binding": "link_service",
+                "function": "getLinks"
+            },
+            "auth": true
+        },
+        {
+            "method": "GET",
+            "path": "/v1/link/{key}",
+            "integration": {
+                "type": "service_binding",
+                "binding": "link_service",
+                "function": "getLink"
+            },
+            "auth": true
+        },
+        {
+            "method": "DELETE",
+            "path": "/v1/link/{key}",
+            "integration": {
+                "type": "service_binding",
+                "binding": "link_service",
+                "function": "deleteLink"
+            },
+            "auth": true
+        },
+        {
+            "method": "PUT",
+            "path": "/v1/link/tag",
+            "integration": {
+                "type": "service_binding",
+                "binding": "link_service",
+                "function": "tagLinks"
+            },
+            "auth": true
+        },
+        {
+            "method": "POST",
+            "path": "/v1/analytics",
+            "integration": {
+                "type": "service_binding",
+                "binding": "analytics_service",
+                "function": "getAllAnalyticsData"
+            },
+            "auth": true
+        },
+        {
+            "method": "POST",
+            "path": "/v1/analytics/keys",
+            "integration": {
+                "type": "service_binding",
+                "binding": "analytics_service",
+                "function": "getAnalyticsDataOfKeys"
+            },
+            "auth": true
+        },
+        {
+            "method": "GET",
+            "path": "/v1/subscription/plan",
+            "integration": {
+                "type": "service_binding",
+                "binding": "subscription_service",
+                "function": "getPlans"
+            },
+            "auth": true
+        },
+        {
+            "method": "POST",
+            "path": "/v1/subscription/start-checkout",
+            "integration": {
+                "type": "service_binding",
+                "binding": "subscription_service",
+                "function": "startCheckout"
+            },
+            "auth": true
+        },
+        {
+            "method": "GET",
+            "path": "/v1/subscription/post-checkout",
+            "integration": {
+                "type": "service_binding",
+                "binding": "subscription_service",
+                "function": "postCheckout"
+            },
+            "auth": false
+        },
+        {
+            "method": "POST",
+            "path": "/v1/subscription/ls/webhook",
+            "integration": {
+                "type": "service_binding",
+                "binding": "subscription_service",
+                "function": "handleLemonSqueezyWebhooks"
+            },
+            "auth": false
+        },
+        {
+            "method": "POST",
+            "path": "/v1/subscription/webhook/new-account",
+            "integration": {
+                "type": "service_binding",
+                "binding": "subscription_service",
+                "function": "handleAccountInsertWebook"
+            },
+            "auth": false
+        }
+    ]
+}

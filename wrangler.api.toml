@@ -1,0 +1,39 @@
+name = "send-fax-api"
+main = "serverlessapigateway/src/index.js"
+compatibility_date = "2024-09-02"
+send_metrics = true
+minify = true
+workers_dev = true
+
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[vars]
+AUTH0_DOMAIN = "mqrlink.us.auth0.com"
+AUTH0_CLIENT_ID= "mz0tS8ty8Gqys9UFAxn8I7jJUf88mv5b"
+AUTH0_REDIRECT_URI = "https://magicqrlink-test.irensaltali.workers.dev/v1/auth/callback"
+
+[env.staging]
+name = "send-fax-staging"
+minify = true
+workers_dev = false
+route = { pattern = "api-staging.sendfax.pro", zone_name = "sendfax.pro", custom_domain = true  }
+
+[env.staging.vars]
+AUTH0_DOMAIN = "mqrlink.us.auth0.com"
+AUTH0_CLIENT_ID= "mz0tS8ty8Gqys9UFAxn8I7jJUf88mv5b"
+AUTH0_REDIRECT_URI="https://api-staging.sendfax.pro/v1/auth/callback"
+
+[env.prod]
+name = "magicqrlink"
+minify = true
+workers_dev = false
+route = { pattern = "api.sendfax.pro", zone_name = "sendfax.pro", custom_domain = true }
+kv_namespaces = [
+  { binding = "CONFIG", id = "1863fa3d004549e4800edeebeb36c0ff" }
+]
+
+[env.prod.vars]
+AUTH0_REDIRECT_URI="https://api.sendfax.pro/v1/auth/callback-redirect"

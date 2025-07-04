@@ -1,0 +1,22 @@
+# Deploy API 
+wr deploy --config wrangler.api.toml --env staging
+
+# Push api config to KV
+wrangler kv key put api-config.json --path api-config.json --binding CONFIG --preview false --env staging
+wrangler kv key put api-config.json --path api-config.landing.json --binding CONFIG --preview false --config wrangler.landing.toml  --env staging
+
+
+# Push secrets
+wrangler secret put AUTH0_CLIENT_SECRET --name magicqrlink-test --env staging
+
+wrangler secret list  --name magicqrlink-test --env staging
+
+
+# KV
+
+wrangler kv namespace create "CONFIG" --preview false --env staging
+
+
+# DB
+
+wrangler d1 execute mqrlink-test --remote --file=./sql/create-table-user.sql

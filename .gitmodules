@@ -1,0 +1,3 @@
+[submodule "serverlessapigateway"]
+	path = serverlessapigateway
+	url = https://github.com/irensaltali/serverlessapigateway.git
