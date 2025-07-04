@@ -1,7 +1,7 @@
 {
     "$schema": "https://raw.githubusercontent.com/irensaltali/serverlessapigateway/refs/heads/main/src/api-config.schema.json",
     "title": "API Gateway Config",
-    "description": "Configuration for the Magic QR Link",
+    "description": "Configuration for the Send Fax API",
     "servers": [
         {
             "alias": "serverlessapigateway-api",
@@ -16,28 +16,16 @@
     ],
     "serviceBindings": [
         {
-            "alias": "link_service",
-            "binding": "LINK_SERVICE"
-        },
-        {
-            "alias": "account_service",
-            "binding": "ACCOUNT_SERVICE"
-        },
-        {
-            "alias": "analytics_service",
-            "binding": "ANALYTICS_SERVICE"
-        },
-        {
-            "alias": "subscription_service",
-            "binding": "SUBSCRIPTION_SERVICE"
+            "alias": "fax_service",
+            "binding": "FAX_SERVICE"
         }
     ],
     "cors": {
         "allow_origins": [
-            "https://magicqrlink.com",
-            "https://api-staging.magicqrlink.com",
-            "https://api.magicqrlink.com",
-            "https://magicqrlink-test.irensaltali.workers.dev"
+            "https://sendfax.pro",
+            "https://api-staging.sendfax.pro",
+            "https://api.sendfax.pro",
+            "https://send-fax-staging.irensaltali.workers.dev/"
         ],
         "allow_methods": [
             "GET",
@@ -276,6 +264,36 @@
                 "type": "service_binding",
                 "binding": "subscription_service",
                 "function": "handleAccountInsertWebook"
+            },
+            "auth": false
+        },
+        {
+            "method": "POST",
+            "path": "/v1/fax/send",
+            "integration": {
+                "type": "service_binding",
+                "binding": "fax_service",
+                "function": "sendFax"
+            },
+            "auth": true
+        },
+        {
+            "method": "GET",
+            "path": "/v1/fax/status",
+            "integration": {
+                "type": "service_binding",
+                "binding": "fax_service",
+                "function": "getFaxStatus"
+            },
+            "auth": true
+        },
+        {
+            "method": "POST",
+            "path": "/v1/fax/webhook/user-created",
+            "integration": {
+                "type": "service_binding",
+                "binding": "fax_service",
+                "function": "handleSupabaseWebhookPostUserCreated"
             },
             "auth": false
         }

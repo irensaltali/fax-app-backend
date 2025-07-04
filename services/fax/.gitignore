@@ -157,7 +157,6 @@ dist
 # Stores VSCode versions used for testing VSCode extensions
 
 .vscode-test
-.vscode/
 
 # yarn v2
 
@@ -171,23 +170,3 @@ dist
 
 .dev.vars
 .wrangler/
-
-.DS_Store
-
-
-# Exclude dev files
-
-.dev/
-.env
-.env.development.local
-.env.test.local
-.env.production.local
-.env.local
-
-# Ignore services_by_link folder
-services_by_link/
-
-
-# Ignore dev files
-dev/
-.dev/

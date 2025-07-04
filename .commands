@@ -1,4 +1,4 @@
-# Deploy API 
+# Deploy API Only
 wr deploy --config wrangler.api.toml --env staging
 
 # Push api config to KV
