@@ -97,14 +97,23 @@ deploy_worker() {
   echo -e "${BLUE}Deploying worker with config path: $config_path and API config: $api_config${NC}"
   echo -e "${BLUE}Environment: $env${NC}"
   
+  # Determine the correct API config file based on environment
+  local actual_api_config
   if [ -z "$env" ]; then
-    wrangler kv key put api-config.json --path $api_config --binding CONFIG --config $config_path --preview false
-    wrangler kv key put DISPOSABLE_DOMAINS --path ./data/disposable.txt --binding CONFIG --config $config_path --preview false 
-    wrangler deploy --config $config_path
+    actual_api_config=$api_config
   else
-    wrangler kv key put api-config.json --path $api_config --binding CONFIG --config $config_path --preview false --env $env
-    wrangler kv key put DISPOSABLE_DOMAINS --path ./data/disposable.txt --binding CONFIG --config $config_path --preview false --env $env
-    wrangler deploy --config $config_path --env $env
+    # Replace .json with .${env}.json for environment-specific configs
+    actual_api_config="api-config.${env}.json"
+  fi
+  
+  echo -e "${BLUE}Using API config file: $actual_api_config${NC}"
+  
+  if [ -z "$env" ]; then
+    npx wrangler kv key put api-config.json --path $actual_api_config --binding CONFIG --config $config_path --preview false --remote
+    npx wrangler deploy --config $config_path
+  else
+    npx wrangler kv key put api-config.json --path $actual_api_config --binding CONFIG --config $config_path --preview false --env $env --remote
+    npx wrangler deploy --config $config_path --env $env
   fi
   
   if [ $? -eq 0 ]; then
@@ -124,9 +133,9 @@ deploy_service() {
   echo -e "${BLUE}Deploying service: $service_name${NC}"
   
   if [ -z "$env" ]; then
-    (cd "$service_path" && wrangler deploy)
+    (cd "$service_path" && npx wrangler deploy)
   else
-    (cd "$service_path" && wrangler deploy --env "$env")
+    (cd "$service_path" && npx wrangler deploy --env "$env")
   fi
   
   if [ $? -eq 0 ]; then
@@ -139,20 +148,23 @@ deploy_service() {
 
 # Check if at least one argument is provided
 if [ $# -lt 1 ]; then
-  echo "Usage: $0 <project> <all> [--env <environment>] [--skip-tests]"
+  echo "Usage: $0 <project> <all> [--env <environment>] [--skip-tests] [--services-only]"
   echo "  <project>: The project name (used for config files)"
   echo "  <all>: Deploy all services in addition to main worker"
   echo "  --env <environment>: Deploy to specific environment"
   echo "  --skip-tests: Skip running tests before deployment"
+  echo "  --services-only: Skip deploying the main worker"
   exit 1
 fi
 
 # Set project and config paths
 PROJECT=$1
 CONFIG_PATH="wrangler.$PROJECT.toml"
-API_CONFIG="api-config.$PROJECT.json"
+API_CONFIG="api-config.json"
 ENV=""
 SKIP_TESTS=false
+# Whether to deploy the main worker
+DEPLOY_WORKER=true
 
 # Parse arguments
 shift
@@ -164,6 +176,12 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-tests)
       SKIP_TESTS=true
+      shift
+      ;;
+    --services-only)
+      DEPLOY_WORKER=false
+      # If user wants only services, ensure DEPLOY_ALL is true unless explicitly set
+      DEPLOY_ALL=true
       shift
       ;;
     all)
@@ -188,6 +206,7 @@ echo -e "${BLUE}Config Path: $CONFIG_PATH${NC}"
 echo -e "${BLUE}API Config: $API_CONFIG${NC}"
 echo -e "${BLUE}Environment: ${ENV:-default}${NC}"
 echo -e "${BLUE}Deploy All Services: ${DEPLOY_ALL:-false}${NC}"
+echo -e "${BLUE}Deploy Main Worker: ${DEPLOY_WORKER}${NC}"
 echo -e "${BLUE}Skip Tests: $SKIP_TESTS${NC}"
 echo -e "${BLUE}===========================================${NC}"
 
@@ -205,9 +224,13 @@ echo -e "${BLUE}===========================================${NC}"
 echo -e "${BLUE}Starting deployment process...${NC}"
 echo -e "${BLUE}===========================================${NC}"
 
-if ! deploy_worker $CONFIG_PATH $API_CONFIG $ENV; then
-  echo -e "${RED}Main worker deployment failed, aborting...${NC}"
-  exit 1
+if [ "$DEPLOY_WORKER" = true ]; then
+  if ! deploy_worker $CONFIG_PATH $API_CONFIG $ENV; then
+    echo -e "${RED}Main worker deployment failed, aborting...${NC}"
+    exit 1
+  fi
+else
+  echo -e "${YELLOW}Skipping main worker deployment (--services-only flag set)${NC}"
 fi
 
 # Check if the 'all' flag is provided

@@ -1,0 +1,123 @@
+{
+    "$schema": "https://raw.githubusercontent.com/irensaltali/serverlessapigateway/refs/heads/main/src/api-config.schema.json",
+    "title": "API Gateway Config",
+    "description": "Configuration for the Send Fax API",
+    "servers": [
+        {
+            "alias": "serverlessapigateway-api",
+            "url": "https://74ec-2a02-e0-665f-2400-4803-52e0-7bcf-8789.ngrok-free.app"
+        }
+    ],
+    "services": [
+        {
+            "alias": "endpoint1",
+            "entrypoint": "./services/endpoint1"
+        }
+    ],
+    "serviceBindings": [
+        {
+            "alias": "fax_service",
+            "binding": "FAX_SERVICE"
+        }
+    ],
+    "cors": {
+        "allow_origins": [
+            "https://sendfax.pro",
+            "https://api-staging.sendfax.pro",
+            "https://api.sendfax.pro",
+            "https://send-fax-staging.irensaltali.workers.dev/"
+        ],
+        "allow_methods": [
+            "GET",
+            "POST",
+            "PUT",
+            "DELETE",
+            "OPTIONS"
+        ],
+        "allow_headers": [
+            "*"
+        ],
+        "expose_headers": [
+            "*"
+        ],
+        "allow_credentials": true,
+        "max_age": 3600
+    },
+    "authorizer": {
+        "type": "supabase",
+        "jwt_secret": "$secrets.SUPABASE_JWT_SECRET",
+        "issuer": "https://YOUR_PROJECT_ID.supabase.co/auth/v1",
+        "audience": "authenticated"
+    },
+    "variables": {
+        "global_variable": "global_variable_value"
+    },
+    "paths": [
+        {
+            "method": "POST",
+            "path": "/v1/fax/send",
+            "integration": {
+                "type": "service_binding",
+                "binding": "fax_service",
+                "function": "sendFax"
+            },
+            "auth": true
+        },
+        {
+            "method": "GET",
+            "path": "/v1/fax/status",
+            "integration": {
+                "type": "service_binding",
+                "binding": "fax_service",
+                "function": "getFaxStatus"
+            },
+            "auth": true
+        },
+        {
+            "method": "POST",
+            "path": "/v1/fax/webhook/user-created",
+            "integration": {
+                "type": "service_binding",
+                "binding": "fax_service",
+                "function": "handleSupabaseWebhookPostUserCreated"
+            },
+            "auth": false
+        },
+        {
+            "method": "POST",
+            "path": "/v1/auth/supabase/otp",
+            "integration": {
+                "type": "supabase_passwordless_auth"
+            },
+            "auth": false
+        },
+        {
+            "method": "POST",
+            "path": "/v1/auth/supabase/otp/verify",
+            "integration": {
+                "type": "supabase_passwordless_verify"
+            },
+            "auth": false
+        },
+        {
+            "method": "GET",
+            "path": "/v1/fax/health",
+            "integration": {
+                "type": "service_binding",
+                "binding": "fax_service",
+                "function": "health"
+            },
+            "auth": false
+        },
+        {
+            "method": "GET",
+            "path": "/v1/fax/health/protected",
+            "integration": {
+                "type": "service_binding",
+                "binding": "fax_service",
+                "function": "healthProtected"
+            },
+            "auth": true
+        }
+    ]
+}

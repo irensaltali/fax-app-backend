@@ -1,0 +1,22 @@
+name = "fax-service"
+main = "src/fax.js"
+compatibility_date = "2025-07-04"
+compatibility_flags = ["nodejs_compat"]
+send_metrics = true
+minify = true
+workers_dev = true
+
+[observability]
+enabled = true
+
+[env.staging]
+name = "fax-service-staging"
+
+[env.staging.observability]
+enabled = true
+
+[env.prod]
+name = "fax-service-prod" 
+
+[env.prod.observability]
+enabled = true
