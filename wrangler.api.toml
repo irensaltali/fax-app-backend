@@ -10,9 +10,10 @@ kv_namespaces = [
   { binding = "CONFIG", id = "b07bdc1b33974cd2bd01feaff33c9688" }
 ]
 
-[[services]]
-binding = "FAX_SERVICE"
-service = "fax-service"
+services = [
+  { binding = "FAX_SERVICE", service = "fax-service" },
+  { binding = "AUTH_SERVICE", service = "auth-service" }
+]
 
 [observability]
 enabled = true
@@ -29,11 +30,14 @@ kv_namespaces = [
   { binding = "CONFIG", id = "9dcb081c93d8429f984b691ed3a293c5" }
 ]
 
-[[env.staging.services]]
-binding = "FAX_SERVICE"
-service = "fax-service-staging"
+services = [
+  { binding = "FAX_SERVICE", service = "fax-service-staging" },
+  { binding = "AUTH_SERVICE", service = "auth-service-staging" }
+]
 
 [env.staging.vars]
+SUPABASE_URL = "https://vqdpahsrwtaccjozuchj.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZxZHBhaHNyd3RhY2Nqb3p1Y2hqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTE1NzQ3MTUsImV4cCI6MjA2NzE1MDcxNX0.N1tYaGtNJMv8Ln4XW6d1idHb4-zfr2IKGLAGgJunSFI"
 
 [env.prod]
 name = "magicqrlink"
@@ -44,9 +48,10 @@ kv_namespaces = [
   { binding = "CONFIG", id = "b56a5a503127451398dc6868f183a0fe" }
 ]
 
-[[env.prod.services]]
-binding = "FAX_SERVICE"
-service = "fax-service-prod"
+services = [
+  { binding = "FAX_SERVICE", service = "fax-service-prod" },
+  { binding = "AUTH_SERVICE", service = "auth-service-prod" }
+]
 
 [env.prod.vars]
 AUTH0_REDIRECT_URI="https://api.sendfax.pro/v1/auth/callback-redirect"

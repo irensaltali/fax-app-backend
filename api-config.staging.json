@@ -12,12 +12,20 @@
         {
             "alias": "endpoint1",
             "entrypoint": "./services/endpoint1"
+        },
+        {
+            "alias": "auth_service",
+            "entrypoint": "./services/auth"
         }
     ],
     "serviceBindings": [
         {
             "alias": "fax_service",
             "binding": "FAX_SERVICE"
+        },
+        {
+            "alias": "auth_service",
+            "binding": "AUTH_SERVICE"
         }
     ],
     "cors": {
@@ -46,7 +54,7 @@
     "authorizer": {
         "type": "supabase",
         "jwt_secret": "$secrets.SUPABASE_JWT_SECRET",
-        "issuer": "https://YOUR_PROJECT_ID.supabase.co/auth/v1",
+        "issuer": "https://vqdpahsrwtaccjozuchj.supabase.co/auth/v1",
         "audience": "authenticated"
     },
     "variables": {
@@ -98,6 +106,106 @@
                 "type": "supabase_passwordless_verify"
             },
             "auth": false
+        },
+        {
+            "method": "POST",
+            "path": "/v1/auth/email/otp",
+            "integration": {
+                "type": "service_binding",
+                "binding": "auth_service",
+                "function": "sendEmailOTP"
+            },
+            "auth": false
+        },
+        {
+            "method": "POST",
+            "path": "/v1/auth/signin",
+            "integration": {
+                "type": "service_binding",
+                "binding": "auth_service",
+                "function": "signInWithPassword"
+            },
+            "auth": false
+        },
+        {
+            "method": "POST",
+            "path": "/v1/auth/forgot-password",
+            "integration": {
+                "type": "service_binding",
+                "binding": "auth_service",
+                "function": "forgotPassword"
+            },
+            "auth": false
+        },
+        {
+            "method": "POST",
+            "path": "/v1/auth/verify",
+            "integration": {
+                "type": "service_binding",
+                "binding": "auth_service",
+                "function": "verifyOTP"
+            },
+            "auth": false
+        },
+        {
+            "method": "GET",
+            "path": "/v1/auth/profile",
+            "integration": {
+                "type": "service_binding",
+                "binding": "auth_service",
+                "function": "getUserProfile"
+            },
+            "auth": true
+        },
+        {
+            "method": "PUT",
+            "path": "/v1/auth/profile",
+            "integration": {
+                "type": "service_binding",
+                "binding": "auth_service",
+                "function": "updateUserProfile"
+            },
+            "auth": true
+        },
+        {
+            "method": "POST",
+            "path": "/v1/auth/refresh",
+            "integration": {
+                "type": "service_binding",
+                "binding": "auth_service",
+                "function": "refreshToken"
+            },
+            "auth": false
+        },
+        {
+            "method": "POST",
+            "path": "/v1/auth/signout",
+            "integration": {
+                "type": "service_binding",
+                "binding": "auth_service",
+                "function": "signOut"
+            },
+            "auth": true
+        },
+        {
+            "method": "GET",
+            "path": "/v1/auth/health",
+            "integration": {
+                "type": "service_binding",
+                "binding": "auth_service",
+                "function": "health"
+            },
+            "auth": false
+        },
+        {
+            "method": "GET",
+            "path": "/v1/auth/health/protected",
+            "integration": {
+                "type": "service_binding",
+                "binding": "auth_service",
+                "function": "healthProtected"
+            },
+            "auth": true
         },
         {
             "method": "GET",

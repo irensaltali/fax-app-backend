@@ -11,6 +11,8 @@ wrangler secret put AUTH0_CLIENT_SECRET --name magicqrlink-test --env staging
 
 wrangler secret list  --name magicqrlink-test --env staging
 
+wr secret put SUPABASE_JWT_SECRET --env staging --config wrangler.api.toml 
+
 
 # KV
 

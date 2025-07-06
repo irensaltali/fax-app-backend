@@ -191,3 +191,6 @@ services_by_link/
 # Ignore dev files
 dev/
 .dev/
+
+# Ignore secret files
+*.secret
