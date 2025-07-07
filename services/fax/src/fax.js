@@ -219,11 +219,26 @@ export default class extends WorkerEntrypoint {
 		let requestBody = null; // Declare at function scope for error handling access
 		
 		try {
-			this.log('INFO', 'Send fax request received');
+			this.log('INFO', 'Send fax request received', {
+				method: request.method,
+				url: request.url,
+				hasBody: !!request.body,
+				contentType: request.headers.get('content-type'),
+				userAgent: request.headers.get('user-agent'),
+				authorization: request.headers.get('authorization') ? 'Bearer [REDACTED]' : 'none'
+			});
 			
 			// Parse the stringified parameters back to objects
+			this.log('DEBUG', 'Parsing environment and context parameters');
 			this.env = JSON.parse(caller_env);
 			const context = JSON.parse(sagContext);
+			
+			this.log('DEBUG', 'Environment and context parsed successfully', {
+				hasEnv: !!this.env,
+				hasContext: !!context,
+				envKeys: this.env ? Object.keys(this.env).filter(key => !key.includes('KEY') && !key.includes('SECRET')) : [],
+				contextKeys: context ? Object.keys(context) : []
+			});
 			
 			const apiKey = this.env.NOTIFYRE_API_KEY;
 			if (!apiKey) {
@@ -238,17 +253,24 @@ export default class extends WorkerEntrypoint {
 			});
 
 		// Get request body
+		this.log('DEBUG', 'Starting request body processing');
 		if (request.body) {
 			const contentType = request.headers.get('content-type') || '';
-			this.log('DEBUG', 'Processing request body', { contentType });
+			this.log('DEBUG', 'Processing request body', { 
+				contentType,
+				hasContentLength: !!request.headers.get('content-length'),
+				contentLength: request.headers.get('content-length')
+			});
 			
 			if (contentType.includes('multipart/form-data')) {
+				this.log('DEBUG', 'Parsing multipart/form-data request');
 				requestBody = await request.formData();
 				this.log('DEBUG', 'Received FormData request', { 
 					formDataKeys: Array.from(requestBody.keys()),
 					formDataSize: requestBody.entries ? Array.from(requestBody.entries()).length : 'unknown'
 				});
 			} else if (contentType.includes('application/json')) {
+				this.log('DEBUG', 'Parsing application/json request');
 				requestBody = await request.json();
 				this.log('DEBUG', 'Received JSON request', { 
 					hasRecipient: !!requestBody.recipient,
@@ -257,9 +279,15 @@ export default class extends WorkerEntrypoint {
 					recipientCount: requestBody.recipients ? requestBody.recipients.length : (requestBody.recipient ? 1 : 0),
 					fileCount: requestBody.files ? requestBody.files.length : 0,
 					hasMessage: !!requestBody.message,
-					hasCoverPage: !!requestBody.coverPage
+					hasCoverPage: !!requestBody.coverPage,
+					coverPageValue: requestBody.coverPage || 'none',
+					hasSenderId: !!requestBody.senderId,
+					senderIdValue: requestBody.senderId || 'none',
+					hasSubject: !!requestBody.subject,
+					subjectValue: requestBody.subject || 'none'
 				});
 			} else {
+				this.log('DEBUG', 'Parsing text/plain request');
 				requestBody = await request.text();
 				this.log('DEBUG', 'Received text request', { bodyLength: requestBody.length });
 			}
@@ -268,10 +296,12 @@ export default class extends WorkerEntrypoint {
 		}
 
 		// Prepare fax submission data for SDK
+		this.log('DEBUG', 'Starting fax request preparation');
 		let faxRequest = {};
 		
 		// Handle different input formats
 		if (requestBody instanceof FormData) {
+			this.log('DEBUG', 'Converting FormData to fax request object');
 			// Convert FormData to object for SDK
 			for (const [key, value] of requestBody.entries()) {
 				if (key === 'recipients[]') {
@@ -284,7 +314,13 @@ export default class extends WorkerEntrypoint {
 					faxRequest[key] = value;
 				}
 			}
+			this.log('DEBUG', 'FormData conversion completed', {
+				convertedKeys: Object.keys(faxRequest),
+				recipientCount: faxRequest.recipients ? faxRequest.recipients.length : 0,
+				fileCount: faxRequest.files ? faxRequest.files.length : 0
+			});
 		} else if (typeof requestBody === 'object' && requestBody !== null) {
+			this.log('DEBUG', 'Processing JSON object request body');
 			// Handle JSON payload
 			const {
 				recipient,
@@ -296,32 +332,93 @@ export default class extends WorkerEntrypoint {
 				...otherFields
 			} = requestBody;
 
+			this.log('DEBUG', 'Extracted JSON payload fields', {
+				hasRecipient: !!recipient,
+				hasRecipients: !!recipients,
+				recipientsType: Array.isArray(recipients) ? 'array' : typeof recipients,
+				recipientsLength: Array.isArray(recipients) ? recipients.length : 'not_array',
+				hasMessage: !!message,
+				messageLength: message ? message.length : 0,
+				hasCoverPage: !!coverPage,
+				coverPageValue: coverPage,
+				hasFiles: !!files,
+				filesType: Array.isArray(files) ? 'array' : typeof files,
+				filesLength: Array.isArray(files) ? files.length : 'not_array',
+				hasSenderId: !!senderId,
+				senderIdValue: senderId,
+				otherFieldsKeys: Object.keys(otherFields)
+			});
+
 			// Add recipient(s)
 			if (recipients && Array.isArray(recipients)) {
 				faxRequest.recipients = recipients;
+				this.log('DEBUG', 'Set recipients from array', { count: recipients.length });
 			} else if (recipient) {
 				faxRequest.recipients = [recipient];
+				this.log('DEBUG', 'Set recipients from single recipient', { recipient: recipient.replace(/\d/g, '*') });
+			} else {
+				this.log('WARN', 'No recipients provided in request');
 			}
 
 			// Add optional fields
-			if (message) faxRequest.message = message;
-			if (coverPage) faxRequest.coverPage = coverPage;
-			if (senderId) faxRequest.senderId = senderId;
+			if (message) {
+				faxRequest.message = message;
+				this.log('DEBUG', 'Set message field', { messageLength: message.length });
+			}
+			if (coverPage) {
+				faxRequest.coverPage = coverPage;
+				this.log('DEBUG', 'Set cover page field', { coverPage });
+			}
+			if (senderId) {
+				faxRequest.senderId = senderId;
+				this.log('DEBUG', 'Set sender ID field', { senderId: senderId.replace(/\d/g, '*') });
+			}
 
 			// Add other fields
-			Object.assign(faxRequest, otherFields);
+			if (Object.keys(otherFields).length > 0) {
+				Object.assign(faxRequest, otherFields);
+				this.log('DEBUG', 'Added other fields', { otherFieldsKeys: Object.keys(otherFields) });
+			}
 
 			// Handle file data (base64 or file paths)
 			if (files && Array.isArray(files)) {
+				this.log('DEBUG', 'Processing files from JSON payload', { fileCount: files.length });
 				faxRequest.files = files.map((file, index) => {
+					this.log('DEBUG', `Processing file ${index}`, {
+						hasData: !!file.data,
+						dataLength: file.data ? file.data.length : 0,
+						filename: file.filename || file.name || 'unknown',
+						mimeType: file.mimeType || 'unknown'
+					});
+					
 					if (file.data) {
 						// Handle base64 data
-						const buffer = Uint8Array.from(atob(file.data), c => c.charCodeAt(0));
-						return new Blob([buffer], { type: file.mimeType || 'application/pdf' });
+						try {
+							const buffer = Uint8Array.from(atob(file.data), c => c.charCodeAt(0));
+							const blob = new Blob([buffer], { type: file.mimeType || 'application/pdf' });
+							this.log('DEBUG', `File ${index} converted to Blob`, { 
+								blobSize: blob.size,
+								blobType: blob.type 
+							});
+							return blob;
+						} catch (base64Error) {
+							this.log('ERROR', `Failed to decode base64 for file ${index}`, {
+								error: base64Error.message,
+								dataPreview: file.data ? file.data.substring(0, 50) + '...' : 'none'
+							});
+							throw new Error(`Invalid base64 data for file ${index}`);
+						}
 					}
+					this.log('DEBUG', `File ${index} used as-is (no data field)`);
 					return file;
 				});
+				this.log('DEBUG', 'All files processed successfully', { processedCount: faxRequest.files.length });
 			}
+		} else {
+			this.log('DEBUG', 'Request body is not a JSON object', { 
+				bodyType: typeof requestBody,
+				bodyConstructor: requestBody ? requestBody.constructor.name : 'null'
+			});
 		}
 		
 		// Log the prepared fax request data (without sensitive content)
@@ -343,6 +440,7 @@ export default class extends WorkerEntrypoint {
 		this.log('DEBUG', 'Submitting fax request to Notifyre API');
 		
 		// Prepare Notifyre API payload structure
+		this.log('DEBUG', 'Building Notifyre API payload structure');
 		const notifyrePayload = {
 			Faxes: {
 				Recipients: [],
@@ -354,20 +452,50 @@ export default class extends WorkerEntrypoint {
 			}
 		};
 		
+		this.log('DEBUG', 'Base payload structure created', {
+			sendFrom: notifyrePayload.Faxes.SendFrom,
+			clientReference: notifyrePayload.Faxes.ClientReference,
+			subject: notifyrePayload.Faxes.Subject,
+			isHighQuality: notifyrePayload.Faxes.IsHighQuality
+		});
+		
 		// Add template if cover page is specified
 		if (faxRequest.coverPage) {
 			notifyrePayload.TemplateName = faxRequest.coverPage;
+			this.log('DEBUG', 'Added cover page template to payload', { templateName: faxRequest.coverPage });
+		} else {
+			this.log('DEBUG', 'No cover page specified, proceeding without template');
 		}
 		
 		// Convert recipients to Notifyre format
+		this.log('DEBUG', 'Converting recipients to Notifyre format');
 		if (faxRequest.recipients && Array.isArray(faxRequest.recipients)) {
-			faxRequest.recipients.forEach(recipient => {
+			this.log('DEBUG', 'Processing recipients array', { 
+				recipientCount: faxRequest.recipients.length,
+				recipients: faxRequest.recipients.map(r => r.replace(/\d/g, '*'))
+			});
+			
+			faxRequest.recipients.forEach((recipient, index) => {
 				// Assume all recipients are fax numbers for now
 				// Could be enhanced to detect contact IDs vs phone numbers
 				notifyrePayload.Faxes.Recipients.push({
 					Type: "fax_number",
 					Value: recipient
 				});
+				this.log('DEBUG', `Added recipient ${index}`, { 
+					type: "fax_number",
+					value: recipient.replace(/\d/g, '*')
+				});
+			});
+			
+			this.log('DEBUG', 'All recipients processed', { 
+				totalRecipients: notifyrePayload.Faxes.Recipients.length 
+			});
+		} else {
+			this.log('WARN', 'No valid recipients array found', {
+				hasRecipients: !!faxRequest.recipients,
+				recipientsType: typeof faxRequest.recipients,
+				isArray: Array.isArray(faxRequest.recipients)
 			});
 		}
 		
@@ -473,6 +601,15 @@ export default class extends WorkerEntrypoint {
 			this.log('WARN', 'Failed to log payload details', { error: loggingError.message });
 		}
 		
+		this.log('INFO', 'Sending request to Notifyre API', {
+			endpoint: '/fax/send',
+			method: 'POST',
+			hasPayload: !!notifyrePayload,
+			recipientCount: notifyrePayload.Faxes.Recipients.length,
+			documentCount: notifyrePayload.Faxes.Documents.length,
+			hasTemplate: !!notifyrePayload.TemplateName
+		});
+		
 		const faxResult = await this.makeNotifyreRequest('/fax/send', 'POST', notifyrePayload, apiKey);
 		
 		// Log the API response
@@ -483,7 +620,9 @@ export default class extends WorkerEntrypoint {
 			pages: faxResult.pages,
 			cost: faxResult.cost,
 			hasError: !!faxResult.error,
-			responseKeys: Object.keys(faxResult)
+			errorMessage: faxResult.error || faxResult.errorMessage,
+			responseKeys: Object.keys(faxResult),
+			fullResponse: faxResult
 		});
 			
 		this.log('INFO', 'Fax submitted successfully', { faxId: faxResult.id });
@@ -519,15 +658,29 @@ export default class extends WorkerEntrypoint {
 				errorMessage: error.message,
 				errorStack: error.stack,
 				errorName: error.name,
+				errorCode: error.code,
 				hasRequestBody: !!requestBody,
-				requestBodyType: typeof requestBody
+				requestBodyType: typeof requestBody,
+				requestBodyKeys: requestBody && typeof requestBody === 'object' ? Object.keys(requestBody) : 'not_object',
+				faxRequestKeys: typeof faxRequest === 'object' ? Object.keys(faxRequest || {}) : 'not_available',
+				timestamp: new Date().toISOString()
 			});
+			
+			// Log additional context if available
+			if (this.env) {
+				this.log('ERROR', 'Environment context during error', {
+					hasNotifyreApiKey: !!this.env.NOTIFYRE_API_KEY,
+					logLevel: this.env.LOG_LEVEL || 'not_set',
+					envKeys: Object.keys(this.env).filter(key => !key.includes('KEY') && !key.includes('SECRET'))
+				});
+			}
 			
 			return {
 				statusCode: 500,
 				error: "Fax sending failed",
 				message: error.message,
-				details: error.stack
+				details: error.stack,
+				timestamp: new Date().toISOString()
 			};
 		}
 	}
