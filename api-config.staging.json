@@ -74,6 +74,76 @@
             "auth": true
         },
         {
+            "method": "GET",
+            "path": "/v1/fax/sent",
+            "integration": {
+                "type": "service_binding",
+                "binding": "fax_service",
+                "function": "listSentFaxes"
+            },
+            "auth": true
+        },
+        {
+            "method": "GET",
+            "path": "/v1/fax/received",
+            "integration": {
+                "type": "service_binding",
+                "binding": "fax_service",
+                "function": "listReceivedFaxes"
+            },
+            "auth": true
+        },
+        {
+            "method": "GET",
+            "path": "/v1/fax/sent/download",
+            "integration": {
+                "type": "service_binding",
+                "binding": "fax_service",
+                "function": "downloadSentFax"
+            },
+            "auth": true
+        },
+        {
+            "method": "GET",
+            "path": "/v1/fax/received/download",
+            "integration": {
+                "type": "service_binding",
+                "binding": "fax_service",
+                "function": "downloadReceivedFax"
+            },
+            "auth": true
+        },
+        {
+            "method": "GET",
+            "path": "/v1/fax/numbers",
+            "integration": {
+                "type": "service_binding",
+                "binding": "fax_service",
+                "function": "listFaxNumbers"
+            },
+            "auth": true
+        },
+        {
+            "method": "GET",
+            "path": "/v1/fax/coverpages",
+            "integration": {
+                "type": "service_binding",
+                "binding": "fax_service",
+                "function": "listCoverPages"
+            },
+            "auth": true
+        },
+        {
+            "method": "POST",
+            "path": "/v1/fax/webhook/notifyre",
+            "integration": {
+                "type": "service_binding",
+                "binding": "fax_service",
+                "function": "handleNotifyreWebhook"
+            },
+            "auth": false
+        },
+        {
             "method": "POST",
             "path": "/v1/fax/webhook/user-created",
             "integration": {

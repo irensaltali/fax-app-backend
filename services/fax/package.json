@@ -9,9 +9,9 @@
 		"test": "vitest"
 	},
 	"dependencies": {
-		"jsonwebtoken": "^9.0.2",
+		"@supabase/supabase-js": "^2.50.2",
 		"jose": "^6.0.11",
-		"@supabase/supabase-js": "^2.50.2"
+		"jsonwebtoken": "^9.0.2"
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-pool-workers": "^0.8.19",

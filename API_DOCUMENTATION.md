@@ -1,776 +1,573 @@
-# Send Fax API Documentation
+# Fax API Documentation
 
 ## Overview
 
-The Send Fax API provides comprehensive authentication and fax management services. The API is built on Cloudflare Workers and uses Supabase for authentication.
+This API provides comprehensive fax functionality powered by Notifyre's secure, HIPAA-compliant fax service. The API supports sending faxes, checking status, retrieving sent and received faxes, downloading fax documents, managing fax numbers, and handling webhooks.
 
 ## Base URL
-
 - **Staging**: `https://api-staging.sendfax.pro`
 - **Production**: `https://api.sendfax.pro`
 
 ## Authentication
 
-The API uses JWT-based authentication with Supabase. Most endpoints require a valid JWT token in the Authorization header.
-
-### Authorization Header Format
+All authenticated endpoints require a Bearer token in the Authorization header:
 ```
-Authorization: Bearer <your_jwt_token>
+Authorization: Bearer <your-jwt-token>
 ```
 
-## Response Format
+## Environment Variables Required
 
-All responses are in JSON format with consistent error handling:
+- `NOTIFYRE_API_KEY`: Your Notifyre API key
+- `NOTIFYRE_WEBHOOK_SECRET`: (Optional) Secret for webhook signature verification
+- `SUPABASE_URL`: Supabase project URL
+- `SUPABASE_KEY`: Supabase service role key
+- `SUPABASE_JWT_SECRET`: JWT secret for token verification
 
-**Success Response:**
+## API Endpoints
+
+### 1. Send Fax
+
+**Endpoint**: `POST /v1/fax/send`  
+**Authentication**: Required  
+**Description**: Send a fax using Notifyre API
+
+#### Request Body (JSON)
 ```json
 {
-  "data": { ... },
-  "message": "Success message"
+  "recipient": "1234567890",
+  "recipients": ["1234567890", "0987654321"],
+  "message": "Optional cover page message",
+  "coverPage": "template_id",
+  "senderId": "your_sender_id",
+  "files": [
+    {
+      "data": "base64_encoded_file_data",
+      "filename": "document.pdf",
+      "mimeType": "application/pdf"
+    }
+  ]
 }
 ```
 
-**Error Response:**
+#### Request Body (Form Data)
+```
+recipients[]: 1234567890
+recipients[]: 0987654321
+message: Optional cover page message
+coverPage: template_id
+senderId: your_sender_id
+files[]: <file_upload>
+```
+
+#### Response
 ```json
 {
-  "error": "Error message",
-  "code": "ERROR_CODE"
+  "statusCode": 200,
+  "message": "Fax submitted successfully",
+  "data": {
+    "id": "fax_123456",
+    "status": "preparing",
+    "originalStatus": "Preparing",
+    "message": "Fax has been queued for sending",
+    "timestamp": "2024-01-01T00:00:00Z",
+    "recipient": "1234567890",
+    "pages": 1,
+    "cost": 0.03,
+    "notifyreResponse": { /* Original Notifyre response */ }
+  }
 }
 ```
+
+#### Supported File Types
+- **PDF**: .pdf
+- **Word**: .doc, .docx
+- **Excel**: .xls, .xlsx
+- **Text**: .txt, .rtf
+- **PowerPoint**: .ppt, .pptx
+- **Images**: .jpg, .jpeg, .png, .gif, .bmp, .tiff
+- **Other**: .html, .ps
+
+**Maximum file size**: 100MB  
+**Recommended**: A4 standard sizing for best results
+
+---
+
+### 2. Get Fax Status
+
+**Endpoint**: `GET /v1/fax/status?id={fax_id}`  
+**Authentication**: Required  
+**Description**: Get the current status of a sent fax
+
+#### Query Parameters
+- `id` (required): The fax ID to check
+
+#### Response
+```json
+{
+  "statusCode": 200,
+  "message": "Status retrieved successfully",
+  "data": {
+    "id": "fax_123456",
+    "status": "sent",
+    "originalStatus": "Successful",
+    "message": "Fax status retrieved",
+    "timestamp": "2024-01-01T00:00:00Z",
+    "recipient": "1234567890",
+    "pages": 1,
+    "cost": 0.03,
+    "sentAt": "2024-01-01T00:05:00Z",
+    "completedAt": "2024-01-01T00:05:30Z",
+    "errorMessage": null,
+    "notifyreResponse": { /* Original Notifyre response */ }
+  }
+}
+```
+
+#### Status Values
+- `preparing`: Fax is being prepared for sending
+- `in_progress`: Fax transmission in progress
+- `sent`: Fax has been sent successfully
+- `failed`: Fax has failed to send
+- `failed_busy`: Failed - recipient was busy
+- `failed_no_answer`: Failed - no answer
+- `failed_invalid_number`: Failed - invalid number format
+- `failed_not_fax_machine`: Failed - not a fax machine
+- `cancelled`: Fax was cancelled
+
+---
+
+### 3. List Sent Faxes
+
+**Endpoint**: `GET /v1/fax/sent`  
+**Authentication**: Required  
+**Description**: Retrieve a list of sent faxes
+
+#### Query Parameters
+- `limit` (optional): Number of results to return (default: 50)
+- `offset` (optional): Number of results to skip (default: 0)
+- `fromDate` (optional): Start date filter (ISO 8601 format)
+- `toDate` (optional): End date filter (ISO 8601 format)
+
+#### Response
+```json
+{
+  "statusCode": 200,
+  "message": "Sent faxes retrieved successfully",
+  "data": {
+    "faxes": [
+      {
+        "id": "fax_123456",
+        "status": "sent",
+        "originalStatus": "Successful",
+        "recipient": "1234567890",
+        "pages": 1,
+        "cost": 0.03,
+        "sentAt": "2024-01-01T00:05:00Z",
+        "completedAt": "2024-01-01T00:05:30Z",
+        "errorMessage": null
+      }
+    ],
+    "total": 1,
+    "limit": 50,
+    "offset": 0
+  }
+}
+```
+
+---
+
+### 4. List Received Faxes
+
+**Endpoint**: `GET /v1/fax/received`  
+**Authentication**: Required  
+**Description**: Retrieve a list of received faxes
+
+#### Query Parameters
+- `limit` (optional): Number of results to return (default: 50)
+- `offset` (optional): Number of results to skip (default: 0)
+- `fromDate` (optional): Start date filter (ISO 8601 format)
+- `toDate` (optional): End date filter (ISO 8601 format)
+
+#### Response
+```json
+{
+  "statusCode": 200,
+  "message": "Received faxes retrieved successfully",
+  "data": {
+    "faxes": [
+      {
+        "id": "received_fax_123456",
+        "sender": "0987654321",
+        "pages": 2,
+        "receivedAt": "2024-01-01T00:10:00Z",
+        "faxNumber": "1234567890",
+        "fileUrl": "https://api.notifyre.com/download/..."
+      }
+    ],
+    "total": 1,
+    "limit": 50,
+    "offset": 0
+  }
+}
+```
+
+---
+
+### 5. Download Sent Fax
+
+**Endpoint**: `GET /v1/fax/sent/download?id={fax_id}`  
+**Authentication**: Required  
+**Description**: Download a sent fax document
+
+#### Query Parameters
+- `id` (required): The fax ID to download
+
+#### Response
+```json
+{
+  "statusCode": 200,
+  "message": "Fax downloaded successfully",
+  "data": {
+    "id": "fax_123456",
+    "fileData": "base64_encoded_pdf_data",
+    "filename": "fax_123456.pdf",
+    "mimeType": "application/pdf"
+  }
+}
+```
+
+---
+
+### 6. Download Received Fax
+
+**Endpoint**: `GET /v1/fax/received/download?id={fax_id}`  
+**Authentication**: Required  
+**Description**: Download a received fax document
+
+#### Query Parameters
+- `id` (required): The received fax ID to download
+
+#### Response
+```json
+{
+  "statusCode": 200,
+  "message": "Received fax downloaded successfully",
+  "data": {
+    "id": "received_fax_123456",
+    "fileData": "base64_encoded_pdf_data",
+    "filename": "received_fax_123456.pdf",
+    "mimeType": "application/pdf"
+  }
+}
+```
+
+---
+
+### 7. List Fax Numbers
+
+**Endpoint**: `GET /v1/fax/numbers`  
+**Authentication**: Required  
+**Description**: Get a list of your fax numbers
+
+#### Response
+```json
+{
+  "statusCode": 200,
+  "message": "Fax numbers retrieved successfully",
+  "data": {
+    "faxNumbers": [
+      {
+        "id": "number_123",
+        "number": "1234567890",
+        "country": "US",
+        "areaCode": "123",
+        "isActive": true,
+        "createdAt": "2024-01-01T00:00:00Z"
+      }
+    ]
+  }
+}
+```
+
+---
+
+### 8. List Cover Pages
+
+**Endpoint**: `GET /v1/fax/coverpages`  
+**Authentication**: Required  
+**Description**: Get a list of available cover page templates
+
+#### Response
+```json
+{
+  "statusCode": 200,
+  "message": "Cover pages retrieved successfully",
+  "data": {
+    "coverPages": [
+      {
+        "id": "template_123",
+        "name": "Business Template",
+        "description": "Professional business cover page",
+        "isDefault": true,
+        "createdAt": "2024-01-01T00:00:00Z"
+      }
+    ]
+  }
+}
+```
+
+---
+
+### 9. Notifyre Webhook Handler
+
+**Endpoint**: `POST /v1/fax/webhook/notifyre`  
+**Authentication**: None (webhook secret verification)  
+**Description**: Handle incoming webhooks from Notifyre for fax status updates
+
+#### Webhook Events
+- `fax.sent`: Fax was successfully sent
+- `fax.delivered`: Fax was delivered (alias for fax.sent)
+- `fax.failed`: Fax sending failed
+- `fax.received`: New fax was received
+
+#### Request Body (from Notifyre)
+```json
+{
+  "event": "fax.sent",
+  "data": {
+    "id": "fax_123456",
+    "status": "Successful",
+    "recipients": ["1234567890"],
+    "pages": 1,
+    "cost": 0.03,
+    "completedAt": "2024-01-01T00:05:30Z"
+  }
+}
+```
+
+#### Response
+```json
+{
+  "statusCode": 200,
+  "message": "Webhook processed successfully",
+  "data": {
+    "id": "webhook_1704067200000",
+    "status": "processed",
+    "message": "Notifyre webhook processed successfully",
+    "timestamp": "2024-01-01T00:00:00Z",
+    "event": "fax.sent",
+    "data": { /* Processed data */ }
+  }
+}
+```
+
+---
+
+### 10. Health Check
+
+**Endpoint**: `GET /v1/fax/health`  
+**Authentication**: None  
+**Description**: Check service health status
+
+#### Response
+```json
+{
+  "statusCode": 200,
+  "message": "Notifyre Fax service healthy",
+  "data": {
+    "service": "notifyre-fax",
+    "timestamp": "2024-01-01T00:00:00Z",
+    "version": "2.0.0",
+    "features": [
+      "send-fax",
+      "get-status",
+      "list-sent-faxes",
+      "list-received-faxes",
+      "download-faxes",
+      "fax-numbers",
+      "cover-pages",
+      "webhooks"
+    ]
+  }
+}
+```
+
+---
+
+### 11. Protected Health Check
+
+**Endpoint**: `GET /v1/fax/health/protected`  
+**Authentication**: Required  
+**Description**: Check service health status with authentication
+
+#### Response
+```json
+{
+  "statusCode": 200,
+  "message": "Notifyre Fax service healthy (authenticated)",
+  "data": {
+    "service": "notifyre-fax",
+    "user": {
+      "sub": "user_id",
+      "email": "user@example.com"
+    },
+    "timestamp": "2024-01-01T00:00:00Z",
+    "version": "2.0.0",
+    "authenticated": true,
+    "features": [
+      "send-fax",
+      "get-status",
+      "list-sent-faxes",
+      "list-received-faxes",
+      "download-faxes",
+      "fax-numbers",
+      "cover-pages",
+      "webhooks"
+    ]
+  }
+}
+```
+
+---
+
+### 12. User Creation Webhook (Supabase)
+
+**Endpoint**: `POST /v1/fax/webhook/user-created`  
+**Authentication**: None (webhook secret verification)  
+**Description**: Handle user creation events from Supabase
+
+---
+
+## Error Responses
+
+All endpoints may return error responses in the following format:
+
+```json
+{
+  "statusCode": 400|401|403|404|500,
+  "error": "Error type",
+  "message": "Human readable error message",
+  "details": "Additional error details (in development)"
+}
+```
+
+### Common Error Codes
+- `400`: Bad Request - Invalid request parameters
+- `401`: Unauthorized - Missing or invalid authentication
+- `403`: Forbidden - Insufficient permissions
+- `404`: Not Found - Resource not found
+- `500`: Internal Server Error - Server-side error
+
+---
 
 ## Rate Limiting
 
-The API implements standard rate limiting. Please implement appropriate retry logic with exponential backoff.
+The API respects Notifyre's rate limiting policies. If rate limits are exceeded, you'll receive a `429 Too Many Requests` response.
 
 ---
 
-# Authentication Endpoints
+## Webhook Security
 
-## 1. Send Email OTP
+### Notifyre Webhooks
+Notifyre webhooks can be verified using HMAC-SHA256 signatures. Set the `NOTIFYRE_WEBHOOK_SECRET` environment variable to enable verification.
 
-Send a one-time password (OTP) to the user's email for authentication.
-
-- **Method**: `POST`
-- **Path**: `/v1/auth/email/otp`
-- **Authentication**: Not required
-
-### Request Body
-```json
-{
-  "email": "user@example.com",
-  "shouldCreateUser": true
-}
-```
-
-### Parameters
-- `email` (required): User's email address
-- `shouldCreateUser` (optional): Whether to create a new user if email doesn't exist (default: true)
-
-### Response
-```json
-{
-  "message": "OTP sent successfully to your email",
-  "note": "Check your email for a 6-digit verification code"
-}
-```
-
-### Example
-```bash
-curl -X POST "https://api-staging.sendfax.pro/v1/auth/email/otp" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "user@example.com"
-  }'
-```
+### Supabase Webhooks
+Supabase webhooks are verified using the `X-Supabase-Event-Secret` header and the `SUPABASE_WEBHOOK_SECRET` environment variable.
 
 ---
 
-## 2. Sign In with Password
+## Integration Examples
 
-Authenticate using email and password.
-
-- **Method**: `POST`
-- **Path**: `/v1/auth/signin`
-- **Authentication**: Not required
-
-### Request Body
-```json
-{
-  "email": "user@example.com",
-  "password": "your_password"
-}
-```
-
-### Parameters
-- `email` (required): User's email address
-- `password` (required): User's password
-
-### Response
-```json
-{
-  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "expires_in": 3600,
-  "user": {
-    "id": "user-uuid",
-    "email": "user@example.com",
-    "created_at": "2023-01-01T00:00:00Z",
-    "email_confirmed_at": "2023-01-01T00:00:00Z"
-  }
-}
-```
-
-### Example
-```bash
-curl -X POST "https://api-staging.sendfax.pro/v1/auth/signin" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "user@example.com",
-    "password": "your_password"
-  }'
-```
-
----
-
-## 3. Forgot Password
-
-Send a password reset email to the user.
-
-- **Method**: `POST`
-- **Path**: `/v1/auth/forgot-password`
-- **Authentication**: Not required
-
-### Request Body
-```json
-{
-  "email": "user@example.com",
-  "redirectTo": "https://yourapp.com/reset-password"
-}
-```
-
-### Parameters
-- `email` (required): User's email address
-- `redirectTo` (optional): URL to redirect to after password reset
-
-### Response
-```json
-{
-  "message": "Password reset email sent successfully",
-  "note": "Check your email for password reset instructions"
-}
-```
-
-### Example
-```bash
-curl -X POST "https://api-staging.sendfax.pro/v1/auth/forgot-password" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "user@example.com"
-  }'
-```
-
----
-
-## 4. Verify OTP
-
-Verify the OTP code sent via email and return authentication tokens.
-
-- **Method**: `POST`
-- **Path**: `/v1/auth/verify`
-- **Authentication**: Not required
-
-### Request Body
-```json
-{
-  "email": "user@example.com",
-  "token": "123456"
-}
-```
-
-### Parameters
-- `email` (required): User's email address
-- `token` (required): 6-digit OTP code received via email
-
-### Response
-```json
-{
-  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "expires_in": 3600,
-  "user": {
-    "id": "user-uuid",
-    "email": "user@example.com",
-    "created_at": "2023-01-01T00:00:00Z",
-    "email_confirmed_at": "2023-01-01T00:00:00Z"
-  }
-}
-```
-
-### Example
-```bash
-curl -X POST "https://api-staging.sendfax.pro/v1/auth/verify" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "user@example.com",
-    "token": "123456"
-  }'
-```
-
----
-
-## 5. Get User Profile
-
-Get the current user's profile information.
-
-- **Method**: `GET`
-- **Path**: `/v1/auth/profile`
-- **Authentication**: Required
-
-### Response
-```json
-{
-  "user": {
-    "id": "user-uuid",
-    "email": "user@example.com",
-    "created_at": "2023-01-01T00:00:00Z",
-    "email_confirmed_at": "2023-01-01T00:00:00Z",
-    "last_sign_in_at": "2023-01-01T00:00:00Z",
-    "user_metadata": {
-      "displayName": "John Doe"
-    },
-    "app_metadata": {}
-  }
-}
-```
-
-### Example
-```bash
-curl -X GET "https://api-staging.sendfax.pro/v1/auth/profile" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN"
-```
-
----
-
-## 6. Update User Profile
-
-Update the current user's profile information.
-
-- **Method**: `PUT`
-- **Path**: `/v1/auth/profile`
-- **Authentication**: Required
-
-### Request Body
-```json
-{
-  "email": "newemail@example.com",
-  "user_metadata": {
-    "displayName": "John Doe",
-    "phone": "+1234567890"
-  }
-}
-```
-
-### Parameters
-- `email` (optional): New email address
-- `user_metadata` (optional): User metadata object
-
-### Response
-```json
-{
-  "message": "Profile updated successfully",
-  "user": {
-    "id": "user-uuid",
-    "email": "newemail@example.com",
-    "user_metadata": {
-      "displayName": "John Doe",
-      "phone": "+1234567890"
-    }
-  }
-}
-```
-
-### Example
-```bash
-curl -X PUT "https://api-staging.sendfax.pro/v1/auth/profile" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
-  -d '{
-    "user_metadata": {
-      "displayName": "John Doe"
-    }
-  }'
-```
-
----
-
-## 7. Refresh Token
-
-Refresh an expired access token using a refresh token.
-
-- **Method**: `POST`
-- **Path**: `/v1/auth/refresh`
-- **Authentication**: Not required
-
-### Request Body
-```json
-{
-  "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-}
-```
-
-### Parameters
-- `refresh_token` (required): Valid refresh token
-
-### Response
-```json
-{
-  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "expires_in": 3600
-}
-```
-
-### Example
-```bash
-curl -X POST "https://api-staging.sendfax.pro/v1/auth/refresh" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "refresh_token": "YOUR_REFRESH_TOKEN"
-  }'
-```
-
----
-
-## 8. Sign Out
-
-Sign out the current user and invalidate the session.
-
-- **Method**: `POST`
-- **Path**: `/v1/auth/signout`
-- **Authentication**: Required
-
-### Response
-```json
-{
-  "message": "Successfully signed out"
-}
-```
-
-### Example
-```bash
-curl -X POST "https://api-staging.sendfax.pro/v1/auth/signout" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN"
-```
-
----
-
-## 9. Health Check (Public)
-
-Check the health status of the authentication service.
-
-- **Method**: `GET`
-- **Path**: `/v1/auth/health`
-- **Authentication**: Not required
-
-### Response
-```json
-{
-  "service": "auth-service",
-  "status": "healthy",
-  "timestamp": "2023-01-01T00:00:00Z",
-  "supabase_configured": true
-}
-```
-
-### Example
-```bash
-curl -X GET "https://api-staging.sendfax.pro/v1/auth/health" \
-  -H "Content-Type: application/json"
-```
-
----
-
-## 10. Health Check (Protected)
-
-Check the health status with authentication verification.
-
-- **Method**: `GET`
-- **Path**: `/v1/auth/health/protected`
-- **Authentication**: Required
-
-### Response
-```json
-{
-  "service": "auth-service",
-  "status": "healthy",
-  "timestamp": "2023-01-01T00:00:00Z",
-  "authenticated": true,
-  "user_id": "user-uuid",
-  "user_email": "user@example.com"
-}
-```
-
-### Example
-```bash
-curl -X GET "https://api-staging.sendfax.pro/v1/auth/health/protected" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN"
-```
-
----
-
-# Fax Service Endpoints
-
-## 11. Send Fax
-
-Send a fax document to one or more recipients.
-
-- **Method**: `POST`
-- **Path**: `/v1/fax/send`
-- **Authentication**: Required
-
-### Request Body
-```json
-{
-  "to": ["+1234567890", "+0987654321"],
-  "document": "base64_encoded_pdf_content",
-  "cover_page": {
-    "subject": "Important Document",
-    "message": "Please find the attached document."
-  }
-}
-```
-
-### Parameters
-- `to` (required): Array of fax numbers in international format
-- `document` (required): Base64-encoded PDF document
-- `cover_page` (optional): Cover page information
-
-### Response
-```json
-{
-  "fax_id": "fax-uuid",
-  "status": "queued",
-  "recipients": ["+1234567890", "+0987654321"],
-  "created_at": "2023-01-01T00:00:00Z"
-}
-```
-
-### Example
-```bash
-curl -X POST "https://api-staging.sendfax.pro/v1/fax/send" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
-  -d '{
-    "to": ["+1234567890"],
-    "document": "JVBERi0xLjQKJdPr6eEKMSAwIG9iago8PC9UeXBlL0NhdGFsb2cvUGFnZXMgMiAwIFI+PgplbmRvYmoKMiAwIG9iago8PC9UeXBlL1BhZ2VzL0tpZHNbMyAwIFJdL0NvdW50IDE+PgplbmRvYmoKMyAwIG9iago8PC9UeXBlL1BhZ2UvTWVkaWFCb3hbMCAwIDYxMiA3OTJdL1BhcmVudCAyIDAgUi9SZXNvdXJjZXM8PC9Gb250PDwvRjEgNCAwIFI+Pj4+L0NvbnRlbnRzIDUgMCBSPj4KZW5kb2JqCjQgMCBvYmoKPDwvVHlwZS9Gb250L1N1YnR5cGUvVHlwZTEvQmFzZUZvbnQvSGVsdmV0aWNhPj4KZW5kb2JqCjUgMCBvYmoKPDwvTGVuZ3RoIDQ0Pj4Kc3RyZWFtCkJUCi9GMSAxMiBUZgoxMDAgNzAwIFRkCihIZWxsbyBXb3JsZCkgVGoKRVQKZW5kc3RyZWFtCmVuZG9iago=",
-    "cover_page": {
-      "subject": "Test Fax",
-      "message": "This is a test fax."
-    }
-  }'
-```
-
----
-
-## 12. Get Fax Status
-
-Check the status of a sent fax.
-
-- **Method**: `GET`
-- **Path**: `/v1/fax/status`
-- **Authentication**: Required
-
-### Query Parameters
-- `fax_id` (required): The fax ID returned from the send fax endpoint
-
-### Response
-```json
-{
-  "fax_id": "fax-uuid",
-  "status": "completed",
-  "recipients": [
-    {
-      "number": "+1234567890",
-      "status": "delivered",
-      "pages": 2,
-      "duration": 45,
-      "completed_at": "2023-01-01T00:00:00Z"
-    }
-  ],
-  "created_at": "2023-01-01T00:00:00Z",
-  "total_pages": 2
-}
-```
-
-### Status Values
-- `queued`: Fax is in the queue waiting to be sent
-- `sending`: Fax is currently being transmitted
-- `completed`: Fax has been successfully delivered
-- `failed`: Fax transmission failed
-- `cancelled`: Fax was cancelled
-
-### Example
-```bash
-curl -X GET "https://api-staging.sendfax.pro/v1/fax/status?fax_id=fax-uuid" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN"
-```
-
----
-
-## 13. Fax Webhook (User Created)
-
-Webhook endpoint for handling user creation events from Supabase.
-
-- **Method**: `POST`
-- **Path**: `/v1/fax/webhook/user-created`
-- **Authentication**: Not required (Webhook)
-
-### Request Body
-```json
-{
-  "type": "INSERT",
-  "table": "auth.users",
-  "record": {
-    "id": "user-uuid",
-    "email": "user@example.com",
-    "created_at": "2023-01-01T00:00:00Z"
-  }
-}
-```
-
-### Response
-```json
-{
-  "message": "User creation webhook processed successfully"
-}
-```
-
----
-
-## 14. Fax Health Check (Public)
-
-Check the health status of the fax service.
-
-- **Method**: `GET`
-- **Path**: `/v1/fax/health`
-- **Authentication**: Not required
-
-### Response
-```json
-{
-  "service": "fax-service",
-  "status": "healthy",
-  "timestamp": "2023-01-01T00:00:00Z"
-}
-```
-
-### Example
-```bash
-curl -X GET "https://api-staging.sendfax.pro/v1/fax/health" \
-  -H "Content-Type: application/json"
-```
-
----
-
-## 15. Fax Health Check (Protected)
-
-Check the health status of the fax service with authentication.
-
-- **Method**: `GET`
-- **Path**: `/v1/fax/health/protected`
-- **Authentication**: Required
-
-### Response
-```json
-{
-  "service": "fax-service",
-  "status": "healthy",
-  "timestamp": "2023-01-01T00:00:00Z",
-  "authenticated": true,
-  "user_id": "user-uuid"
-}
-```
-
-### Example
-```bash
-curl -X GET "https://api-staging.sendfax.pro/v1/fax/health/protected" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN"
-```
-
----
-
-# Legacy Supabase Endpoints
-
-These endpoints provide direct integration with Supabase's authentication system.
-
-## 16. Supabase OTP
-
-Send OTP using Supabase's built-in authentication.
-
-- **Method**: `POST`
-- **Path**: `/v1/auth/supabase/otp`
-- **Authentication**: Not required
-
-### Request Body
-```json
-{
-  "email": "user@example.com"
-}
-```
-
----
-
-## 17. Supabase OTP Verify
-
-Verify OTP using Supabase's built-in authentication.
-
-- **Method**: `POST`
-- **Path**: `/v1/auth/supabase/otp/verify`
-- **Authentication**: Not required
-
-### Request Body
-```json
-{
-  "email": "user@example.com",
-  "token": "123456"
-}
-```
-
----
-
-# Error Codes
-
-## Authentication Errors
-- `MISSING_EMAIL`: Email parameter is required
-- `MISSING_CREDENTIALS`: Required credentials are missing
-- `AUTH_FAILED`: Authentication failed
-- `UNAUTHORIZED`: Access denied, valid JWT token required
-- `OTP_SEND_FAILED`: Failed to send OTP
-- `OTP_VERIFICATION_FAILED`: OTP verification failed
-- `PASSWORD_RESET_FAILED`: Password reset failed
-- `PROFILE_FETCH_FAILED`: Failed to fetch user profile
-- `PROFILE_UPDATE_FAILED`: Failed to update user profile
-- `TOKEN_REFRESH_FAILED`: Token refresh failed
-- `SIGN_OUT_FAILED`: Sign out failed
-
-## General Errors
-- `INTERNAL_ERROR`: Internal server error
-- `RATE_LIMITED`: Too many requests
-
----
-
-# SDK Examples
-
-## JavaScript/TypeScript
-
+### JavaScript/Node.js
 ```javascript
-class SendFaxAPI {
-  constructor(baseUrl, apiKey) {
-    this.baseUrl = baseUrl;
-    this.apiKey = apiKey;
-  }
+// Send a fax
+const response = await fetch('/v1/fax/send', {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${token}`,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    recipient: '1234567890',
+    message: 'Please find attached document',
+    files: [{
+      data: base64FileData,
+      filename: 'document.pdf',
+      mimeType: 'application/pdf'
+    }]
+  })
+});
 
-  async signIn(email, password) {
-    const response = await fetch(`${this.baseUrl}/v1/auth/signin`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ email, password }),
-    });
-    return response.json();
-  }
+const result = await response.json();
+console.log('Fax ID:', result.data.id);
 
-  async sendFax(to, document, accessToken) {
-    const response = await fetch(`${this.baseUrl}/v1/fax/send`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${accessToken}`,
-      },
-      body: JSON.stringify({ to, document }),
-    });
-    return response.json();
+// Check fax status
+const statusResponse = await fetch(`/v1/fax/status?id=${result.data.id}`, {
+  headers: {
+    'Authorization': `Bearer ${token}`
   }
-}
+});
 
-// Usage
-const api = new SendFaxAPI('https://api-staging.sendfax.pro');
-const authResult = await api.signIn('user@example.com', 'password');
-const faxResult = await api.sendFax(['+1234567890'], 'base64_pdf', authResult.access_token);
+const status = await statusResponse.json();
+console.log('Fax Status:', status.data.status);
 ```
 
-## Python
+### cURL
+```bash
+# Send a fax
+curl -X POST "https://api.sendfax.pro/v1/fax/send" \
+  -H "Authorization: Bearer your-jwt-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "recipient": "1234567890",
+    "message": "Please find attached document",
+    "files": [{
+      "data": "base64_encoded_pdf_data",
+      "filename": "document.pdf",
+      "mimeType": "application/pdf"
+    }]
+  }'
 
-```python
-import requests
+# List sent faxes
+curl -X GET "https://api.sendfax.pro/v1/fax/sent?limit=10" \
+  -H "Authorization: Bearer your-jwt-token"
 
-class SendFaxAPI:
-    def __init__(self, base_url):
-        self.base_url = base_url
-        
-    def sign_in(self, email, password):
-        response = requests.post(
-            f"{self.base_url}/v1/auth/signin",
-            json={"email": email, "password": password}
-        )
-        return response.json()
-    
-    def send_fax(self, to, document, access_token):
-        headers = {
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json"
-        }
-        response = requests.post(
-            f"{self.base_url}/v1/fax/send",
-            json={"to": to, "document": document},
-            headers=headers
-        )
-        return response.json()
-
-# Usage
-api = SendFaxAPI("https://api-staging.sendfax.pro")
-auth_result = api.sign_in("user@example.com", "password")
-fax_result = api.send_fax(["+1234567890"], "base64_pdf", auth_result["access_token"])
+# Download a fax
+curl -X GET "https://api.sendfax.pro/v1/fax/sent/download?id=fax_123456" \
+  -H "Authorization: Bearer your-jwt-token"
 ```
 
 ---
 
-# Best Practices
+## Development Setup
 
-## Security
-- Always use HTTPS endpoints
-- Store JWT tokens securely (not in localStorage for web apps)
-- Implement proper token refresh logic
-- Validate all inputs before sending requests
+1. Set environment variables:
+```bash
+export NOTIFYRE_API_KEY="your_notifyre_api_key"
+export NOTIFYRE_WEBHOOK_SECRET="your_webhook_secret"
+export SUPABASE_URL="your_supabase_url"
+export SUPABASE_KEY="your_supabase_key"
+export SUPABASE_JWT_SECRET="your_jwt_secret"
+```
 
-## Error Handling
-- Implement retry logic with exponential backoff
-- Handle rate limiting gracefully
-- Log errors for debugging but don't expose sensitive information
-
-## Performance
-- Cache authentication tokens appropriately
-- Use connection pooling for multiple requests
-- Implement proper timeouts
-
-## Monitoring
-- Monitor API response times
-- Track error rates
-- Set up alerts for service degradation
+2. Deploy the service using Cloudflare Workers
+3. Configure webhooks in your Notifyre dashboard to point to `/v1/fax/webhook/notifyre`
 
 ---
 
-# Support
+## Notes
 
-For API support, please contact:
-- Email: support@sendfax.pro
-- Documentation: https://docs.sendfax.pro
-- Status Page: https://status.sendfax.pro
+- All timestamps are in ISO 8601 format (UTC)
+- File uploads support both base64 encoding (JSON) and multipart form data
+- The service automatically maps Notifyre's status codes to simplified versions
+- Webhook events are stored in Supabase if database credentials are provided
+- All endpoints support CORS for web applications
+- The service is HIPAA compliant when used with Notifyre's secure infrastructure
+
+---
+
+## Support
+
+For API support, please contact the development team or refer to the Notifyre documentation at [https://docs.notifyre.com](https://docs.notifyre.com).
 
 Last Updated: July 6, 2025 

@@ -12,7 +12,6 @@ kv_namespaces = [
 
 services = [
   { binding = "FAX_SERVICE", service = "fax-service" },
-  { binding = "AUTH_SERVICE", service = "auth-service" }
 ]
 
 [observability]
@@ -32,12 +31,12 @@ kv_namespaces = [
 
 services = [
   { binding = "FAX_SERVICE", service = "fax-service-staging" },
-  { binding = "AUTH_SERVICE", service = "auth-service-staging" }
 ]
 
 [env.staging.vars]
 SUPABASE_URL = "https://vqdpahsrwtaccjozuchj.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZxZHBhaHNyd3RhY2Nqb3p1Y2hqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTE1NzQ3MTUsImV4cCI6MjA2NzE1MDcxNX0.N1tYaGtNJMv8Ln4XW6d1idHb4-zfr2IKGLAGgJunSFI"
+LOG_LEVEL = "DEBUG"
 
 [env.prod]
 name = "magicqrlink"
@@ -50,7 +49,6 @@ kv_namespaces = [
 
 services = [
   { binding = "FAX_SERVICE", service = "fax-service-prod" },
-  { binding = "AUTH_SERVICE", service = "auth-service-prod" }
 ]
 
 [env.prod.vars]
