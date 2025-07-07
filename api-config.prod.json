@@ -83,22 +83,7 @@
             },
             "auth": false
         },
-        {
-            "method": "POST",
-            "path": "/v1/auth/supabase/otp",
-            "integration": {
-                "type": "supabase_passwordless_auth"
-            },
-            "auth": false
-        },
-        {
-            "method": "POST",
-            "path": "/v1/auth/supabase/otp/verify",
-            "integration": {
-                "type": "supabase_passwordless_verify"
-            },
-            "auth": false
-        },
+
         {
             "method": "GET",
             "path": "/v1/fax/health",
