@@ -22,3 +22,8 @@ wrangler kv namespace create "CONFIG" --preview false --env staging
 # DB
 
 wrangler d1 execute mqrlink-test --remote --file=./sql/create-table-user.sql
+
+
+#LOGIN
+
+SUPABASE_URL=https://vqdpahsrwtaccjozuchj.supabase.co SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZxZHBhaHNyd3RhY2Nqb3p1Y2hqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTE1NzQ3MTUsImV4cCI6MjA2NzE1MDcxNX0.N1tYaGtNJMv8Ln4XW6d1idHb4-zfr2IKGLAGgJunSFI node ./services/fax/scripts/supabase-login.js  auth-test-supabase@saltali.com 123456

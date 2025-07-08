@@ -15,8 +15,8 @@ import {
 } from './utils.js';
 
 export default class extends WorkerEntrypoint {
-	constructor() {
-		super();
+	constructor(ctx, env) {
+		super(ctx, env);
 		this.logger = null;
 	}
 

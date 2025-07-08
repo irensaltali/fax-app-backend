@@ -194,3 +194,7 @@ dev/
 
 # Ignore secret files
 *.secret
+
+
+tokens.json
+tokens.env
