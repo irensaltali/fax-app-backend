@@ -244,10 +244,14 @@ export default class extends WorkerEntrypoint {
 			isHighQuality: notifyrePayload.Faxes.IsHighQuality
 		});
 		
-		// Add template if cover page is specified
+		// Always add TestCoverPage template to every fax request
+		notifyrePayload.TemplateName = "TestCoverPage";
+		this.logger.log('DEBUG', 'Added default cover page template to payload', { templateName: "TestCoverPage" });
+		
+		// Override with custom template if cover page is specified
 		if (faxRequest.coverPage) {
 			notifyrePayload.TemplateName = faxRequest.coverPage;
-			this.logger.log('DEBUG', 'Added cover page template to payload', { templateName: faxRequest.coverPage });
+			this.logger.log('DEBUG', 'Overrode with custom cover page template', { templateName: faxRequest.coverPage });
 		}
 		
 		// Convert recipients to Notifyre format
@@ -1013,7 +1017,9 @@ export default class extends WorkerEntrypoint {
 	 */
 	async health(request, caller_env, sagContext) {
 		try {
-			this.log('INFO', 'Health check request received');
+			this.env = JSON.parse(caller_env);
+			this.initializeLogger(this.env);
+			this.logger.log('INFO', 'Health check request received');
 			
 			return {
 				statusCode: 200,
@@ -1035,7 +1041,12 @@ export default class extends WorkerEntrypoint {
 				}
 			};
 		} catch (error) {
-			this.log('ERROR', 'Error in health check:', error);
+			// Fallback to console if logger isn't initialized
+			if (this.logger) {
+				this.logger.log('ERROR', 'Error in health check:', error);
+			} else {
+				console.error('Error in health check:', error);
+			}
 			return {
 				statusCode: 500,
 				error: "Health check failed",
@@ -1052,12 +1063,14 @@ export default class extends WorkerEntrypoint {
 	 */
 	async healthProtected(request, caller_env, sagContext) {
 		try {
-			this.log('INFO', 'Protected health check request received');
+			this.env = JSON.parse(caller_env);
+			this.initializeLogger(this.env);
+			this.logger.log('INFO', 'Protected health check request received');
 			
 			// Parse sagContext to extract user info if available
 			const context = JSON.parse(sagContext || '{}');
 			
-			this.log('INFO', 'Authenticated health check', { user: context.jwtPayload?.sub });
+			this.logger.log('INFO', 'Authenticated health check', { user: context.jwtPayload?.sub });
 
 			return {
 				statusCode: 200,
@@ -1081,7 +1094,12 @@ export default class extends WorkerEntrypoint {
 				}
 			};
 		} catch (error) {
-			this.log('ERROR', 'Error in healthProtected:', error);
+			// Fallback to console if logger isn't initialized
+			if (this.logger) {
+				this.logger.log('ERROR', 'Error in healthProtected:', error);
+			} else {
+				console.error('Error in healthProtected:', error);
+			}
 			return {
 				statusCode: 500,
 				error: "Authenticated health check failed",

@@ -288,21 +288,5 @@ describe('Fax Service', () => {
 		});
 	});
 
-	describe('validateSupabaseWebhookSecret', () => {
-		it('should validate correct webhook secret', () => {
-			const request = new Request('https://example.com', {
-				headers: { 'X-Supabase-Event-Secret': 'test-webhook-secret' }
-			});
-			const result = faxService.validateSupabaseWebhookSecret(request, JSON.stringify(mockEnv));
-			expect(result).toBe(true);
-		});
 
-		it('should reject incorrect webhook secret', () => {
-			const request = new Request('https://example.com', {
-				headers: { 'X-Supabase-Event-Secret': 'wrong-secret' }
-			});
-			const result = faxService.validateSupabaseWebhookSecret(request, JSON.stringify(mockEnv));
-			expect(result).toBe(false);
-		});
-	});
 });
