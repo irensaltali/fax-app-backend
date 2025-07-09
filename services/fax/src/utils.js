@@ -2,8 +2,6 @@
  * Utility functions for the Fax Service
  */
 
-import { createClient } from '@supabase/supabase-js';
-
 // Logger configuration
 const logLevels = { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3 };
 
@@ -317,31 +315,24 @@ export class WebhookUtils {
 	}
 }
 
-/**
- * Database utilities
- */
-export class DatabaseUtils {
-	/**
-	 * Get Supabase client
-	 * @param {object} env - Environment variables
-	 * @returns {SupabaseClient}
-	 */
-	static getSupabaseClient(env) {
-		return createClient(env.SUPABASE_URL, env.SUPABASE_KEY);
-	}
-}
+
 
 /**
  * Constants and mappings
  */
 export const NOTIFYRE_STATUS_MAP = {
-	'Preparing': 'preparing',
-	'In Progress': 'in_progress',
-	'Successful': 'sent',
+	'Preparing': 'queued',
+	'In Progress': 'processing',
+	'Sending': 'sending',
+	'Successful': 'delivered',
+	'Delivered': 'delivered',
 	'Failed': 'failed',
-	'Failed - Busy': 'failed_busy',
-	'Failed - No Answer': 'failed_no_answer',
-	'Failed - Check number and try again': 'failed_invalid_number',
-	'Failed - Connection not a Fax Machine': 'failed_not_fax_machine',
-	'Cancelled': 'cancelled'
+	'Failed - Busy': 'busy',
+	'Failed - No Answer': 'no-answer',
+	'Failed - Check number and try again': 'failed',
+	'Failed - Connection not a Fax Machine': 'failed',
+	'Cancelled': 'cancelled',
+	'Queued': 'queued',
+	'Processing': 'processing',
+	'Receiving': 'receiving'
 }; 

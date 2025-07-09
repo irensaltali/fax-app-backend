@@ -152,7 +152,7 @@ const response = await fetch('/api/protected-endpoint', {
 
 #### Configuration Errors
 - ✅ Verify `SUPABASE_URL` is set correctly
-- ✅ Check `SUPABASE_ANON_KEY` or `SUPABASE_KEY` is valid
+- ✅ Check `SUPABASE_ANON_KEY` or `SUPABASE_SERVICE_ROLE_KEY` is valid
 - ✅ Ensure the anon key has the right permissions
 
 #### Token Issues

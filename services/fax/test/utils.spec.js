@@ -3,8 +3,7 @@ import {
 	Logger, 
 	FileUtils, 
 	NotifyreApiUtils, 
-	WebhookUtils, 
-	DatabaseUtils,
+	WebhookUtils,
 	NOTIFYRE_STATUS_MAP 
 } from '../src/utils.js';
 
@@ -501,39 +500,35 @@ describe('Utils Module', () => {
 		});
 	});
 
-	describe('DatabaseUtils', () => {
-		it('should create Supabase client with correct parameters', () => {
-			const mockEnv = {
-				SUPABASE_URL: 'https://test.supabase.co',
-				SUPABASE_KEY: 'test-key'
-			};
 
-			const client = DatabaseUtils.getSupabaseClient(mockEnv);
-			expect(client).toBeDefined();
-		});
-	});
 
 	describe('NOTIFYRE_STATUS_MAP', () => {
 		it('should have correct status mappings', () => {
 			expect(NOTIFYRE_STATUS_MAP).toEqual({
-				'Preparing': 'preparing',
-				'In Progress': 'in_progress',
-				'Successful': 'sent',
+				'Preparing': 'queued',
+				'In Progress': 'processing',
+				'Sending': 'sending',
+				'Successful': 'delivered',
+				'Delivered': 'delivered',
 				'Failed': 'failed',
-				'Failed - Busy': 'failed_busy',
-				'Failed - No Answer': 'failed_no_answer',
-				'Failed - Check number and try again': 'failed_invalid_number',
-				'Failed - Connection not a Fax Machine': 'failed_not_fax_machine',
-				'Cancelled': 'cancelled'
+				'Failed - Busy': 'busy',
+				'Failed - No Answer': 'no-answer',
+				'Failed - Check number and try again': 'failed',
+				'Failed - Connection not a Fax Machine': 'failed',
+				'Cancelled': 'cancelled',
+				'Queued': 'queued',
+				'Processing': 'processing',
+				'Receiving': 'receiving'
 			});
 		});
 
 		it('should map all expected Notifyre statuses', () => {
 			const expectedStatuses = [
-				'Preparing', 'In Progress', 'Successful', 'Failed',
-				'Failed - Busy', 'Failed - No Answer', 
+				'Preparing', 'In Progress', 'Sending', 'Successful', 'Delivered',
+				'Failed', 'Failed - Busy', 'Failed - No Answer', 
 				'Failed - Check number and try again',
-				'Failed - Connection not a Fax Machine', 'Cancelled'
+				'Failed - Connection not a Fax Machine', 'Cancelled',
+				'Queued', 'Processing', 'Receiving'
 			];
 
 			expectedStatuses.forEach(status => {

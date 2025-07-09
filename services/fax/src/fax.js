@@ -5,14 +5,14 @@
  */
 
 import { WorkerEntrypoint } from "cloudflare:workers";
-import { 
-	Logger, 
-	FileUtils, 
-	NotifyreApiUtils, 
-	WebhookUtils, 
-	DatabaseUtils,
-	NOTIFYRE_STATUS_MAP 
+import {
+	Logger,
+	FileUtils,
+	NotifyreApiUtils,
+	WebhookUtils,
+	NOTIFYRE_STATUS_MAP
 } from './utils.js';
+import { DatabaseUtils } from './database.js';
 
 export default class extends WorkerEntrypoint {
 	constructor(ctx, env) {
@@ -39,23 +39,23 @@ export default class extends WorkerEntrypoint {
 	 */
 	async parseRequestBody(request) {
 		this.logger.log('DEBUG', 'Starting request body processing');
-		
+
 		if (!request.body) {
 			this.logger.log('DEBUG', 'No request body provided');
 			return null;
 		}
 
 		const contentType = request.headers.get('content-type') || '';
-		this.logger.log('DEBUG', 'Processing request body', { 
+		this.logger.log('DEBUG', 'Processing request body', {
 			contentType,
 			hasContentLength: !!request.headers.get('content-length'),
 			contentLength: request.headers.get('content-length')
 		});
-		
+
 		if (contentType.includes('multipart/form-data')) {
 			this.logger.log('DEBUG', 'Parsing multipart/form-data request');
 			const formData = await request.formData();
-			this.logger.log('DEBUG', 'Received FormData request', { 
+			this.logger.log('DEBUG', 'Received FormData request', {
 				formDataKeys: Array.from(formData.keys()),
 				formDataSize: formData.entries ? Array.from(formData.entries()).length : 'unknown'
 			});
@@ -63,7 +63,7 @@ export default class extends WorkerEntrypoint {
 		} else if (contentType.includes('application/json')) {
 			this.logger.log('DEBUG', 'Parsing application/json request');
 			const jsonData = await request.json();
-			this.logger.log('DEBUG', 'Received JSON request', { 
+			this.logger.log('DEBUG', 'Received JSON request', {
 				hasRecipient: !!jsonData.recipient,
 				hasRecipients: !!jsonData.recipients,
 				hasFiles: !!jsonData.files,
@@ -91,7 +91,7 @@ export default class extends WorkerEntrypoint {
 	async prepareFaxRequest(requestBody) {
 		this.logger.log('DEBUG', 'Starting fax request preparation');
 		let faxRequest = {};
-		
+
 		if (requestBody instanceof FormData) {
 			this.logger.log('DEBUG', 'Converting FormData to fax request object');
 			// Convert FormData to object for SDK
@@ -113,7 +113,7 @@ export default class extends WorkerEntrypoint {
 			});
 		} else if (typeof requestBody === 'object' && requestBody !== null) {
 			this.logger.log('DEBUG', 'Processing JSON object request body');
-			
+
 			const {
 				recipient,
 				recipients,
@@ -162,7 +162,7 @@ export default class extends WorkerEntrypoint {
 				this.logger.log('DEBUG', 'All files processed successfully', { processedCount: faxRequest.files.length });
 			}
 		}
-		
+
 		// Log the prepared fax request data (without sensitive content)
 		this.logger.log('INFO', 'Prepared fax request for SDK', {
 			hasRecipients: !!faxRequest.recipients,
@@ -177,7 +177,7 @@ export default class extends WorkerEntrypoint {
 			hasSenderId: !!faxRequest.senderId,
 			otherFields: Object.keys(faxRequest).filter(key => !['recipients', 'files', 'message', 'coverPage', 'senderId'].includes(key))
 		});
-		
+
 		return faxRequest;
 	}
 
@@ -188,18 +188,18 @@ export default class extends WorkerEntrypoint {
 	 */
 	async processJsonFiles(files) {
 		const processedFiles = [];
-		
+
 		for (let i = 0; i < files.length; i++) {
 			const file = files[i];
-			
+
 			if (file.data) {
 				// Handle base64 data
 				try {
 					const buffer = Uint8Array.from(atob(file.data), c => c.charCodeAt(0));
 					const blob = new Blob([buffer], { type: file.mimeType || 'application/pdf' });
-					this.logger.log('DEBUG', `File ${i} converted to Blob`, { 
+					this.logger.log('DEBUG', `File ${i} converted to Blob`, {
 						blobSize: blob.size,
-						blobType: blob.type 
+						blobType: blob.type
 					});
 					processedFiles.push(blob);
 				} catch (base64Error) {
@@ -214,7 +214,7 @@ export default class extends WorkerEntrypoint {
 				processedFiles.push(file);
 			}
 		}
-		
+
 		return processedFiles;
 	}
 
@@ -225,7 +225,7 @@ export default class extends WorkerEntrypoint {
 	 */
 	async buildNotifyrePayload(faxRequest) {
 		this.logger.log('DEBUG', 'Building Notifyre API payload structure');
-		
+
 		const notifyrePayload = {
 			Faxes: {
 				Recipients: [],
@@ -236,24 +236,24 @@ export default class extends WorkerEntrypoint {
 				Documents: []
 			}
 		};
-		
+
 		this.logger.log('DEBUG', 'Base payload structure created', {
 			sendFrom: notifyrePayload.Faxes.SendFrom,
 			clientReference: notifyrePayload.Faxes.ClientReference,
 			subject: notifyrePayload.Faxes.Subject,
 			isHighQuality: notifyrePayload.Faxes.IsHighQuality
 		});
-		
+
 		// Always add TestCoverPage template to every fax request
 		notifyrePayload.TemplateName = "TestCoverPage";
 		this.logger.log('DEBUG', 'Added default cover page template to payload', { templateName: "TestCoverPage" });
-		
+
 		// Override with custom template if cover page is specified
 		if (faxRequest.coverPage) {
 			notifyrePayload.TemplateName = faxRequest.coverPage;
 			this.logger.log('DEBUG', 'Overrode with custom cover page template', { templateName: faxRequest.coverPage });
 		}
-		
+
 		// Convert recipients to Notifyre format
 		if (faxRequest.recipients && Array.isArray(faxRequest.recipients)) {
 			faxRequest.recipients.forEach((recipient, index) => {
@@ -261,21 +261,21 @@ export default class extends WorkerEntrypoint {
 					Type: "fax_number",
 					Value: recipient
 				});
-				this.logger.log('DEBUG', `Added recipient ${index}`, { 
+				this.logger.log('DEBUG', `Added recipient ${index}`, {
 					type: "fax_number",
 					value: recipient.replace(/\d/g, '*')
 				});
 			});
 		}
-		
+
 		// Convert files to Notifyre format
 		if (faxRequest.files && Array.isArray(faxRequest.files)) {
 			this.logger.log('DEBUG', 'Processing files for conversion', { fileCount: faxRequest.files.length });
-			
+
 			for (let i = 0; i < faxRequest.files.length; i++) {
 				const file = faxRequest.files[i];
 				let filename = `document_${i + 1}.pdf`;
-				
+
 				try {
 					if (file instanceof Blob || file instanceof File) {
 						// Check file size limit (100MB)
@@ -283,18 +283,18 @@ export default class extends WorkerEntrypoint {
 							this.logger.log('WARN', 'File size exceeds limit', { size: file.size, filename: file.name });
 							continue;
 						}
-						
+
 						// Convert file to base64 safely
 						const arrayBuffer = await file.arrayBuffer();
 						const uint8Array = new Uint8Array(arrayBuffer);
 						const fileData = FileUtils.arrayBufferToBase64(uint8Array);
 						filename = file.name || filename;
-						
+
 						notifyrePayload.Faxes.Documents.push({
 							Filename: filename,
 							Data: fileData
 						});
-						
+
 						this.logger.log('DEBUG', 'Added document to payload', { filename });
 					} else if (file.data) {
 						// Already base64 data
@@ -302,19 +302,19 @@ export default class extends WorkerEntrypoint {
 							Filename: file.filename || file.name || filename,
 							Data: file.data
 						});
-						
+
 						this.logger.log('DEBUG', 'Added base64 document to payload', { filename });
 					}
 				} catch (fileError) {
-					this.logger.log('ERROR', 'Error processing file', { 
+					this.logger.log('ERROR', 'Error processing file', {
 						fileIndex: i,
 						filename: filename,
-						error: fileError.message 
+						error: fileError.message
 					});
 				}
 			}
 		}
-		
+
 		this.logger.log('DEBUG', 'Prepared Notifyre payload structure', {
 			recipientCount: notifyrePayload.Faxes.Recipients.length,
 			documentCount: notifyrePayload.Faxes.Documents.length,
@@ -322,9 +322,11 @@ export default class extends WorkerEntrypoint {
 			hasTemplate: !!notifyrePayload.TemplateName,
 			clientReference: notifyrePayload.Faxes.ClientReference
 		});
-		
+
 		return notifyrePayload;
 	}
+
+
 
 	/**
 	 * Send a fax via Notifyre API
@@ -338,7 +340,7 @@ export default class extends WorkerEntrypoint {
 			this.env = JSON.parse(caller_env);
 			const context = JSON.parse(sagContext);
 			this.initializeLogger(this.env);
-			
+
 			this.logger.log('INFO', 'Send fax request received', {
 				method: request.method,
 				url: request.url,
@@ -347,15 +349,15 @@ export default class extends WorkerEntrypoint {
 				userAgent: request.headers.get('user-agent'),
 				authorization: request.headers.get('authorization') ? 'Bearer [REDACTED]' : 'none'
 			});
-			
+
 			// Validate API key
 			const apiKey = this.env.NOTIFYRE_API_KEY;
 			if (!apiKey) {
 				this.logger.log('ERROR', 'NOTIFYRE_API_KEY not configured');
 				throw new Error('Service configuration error');
 			}
-			
-			this.logger.log('DEBUG', 'API Key configured for sendFax', { 
+
+			this.logger.log('DEBUG', 'API Key configured for sendFax', {
 				hasApiKey: !!apiKey,
 				apiKeyLength: apiKey ? apiKey.length : 0,
 				apiKeyPrefix: apiKey ? apiKey.substring(0, 8) + '...' : 'none'
@@ -363,13 +365,13 @@ export default class extends WorkerEntrypoint {
 
 			// Step 1: Parse request body  
 			const requestBody = await this.parseRequestBody(request);
-			
+
 			// Step 2: Prepare fax request from parsed body
 			const faxRequest = await this.prepareFaxRequest(requestBody);
-			
+
 			// Step 3: Build Notifyre API payload
 			const notifyrePayload = await this.buildNotifyrePayload(faxRequest);
-			
+
 			// Step 4: Submit to Notifyre API
 			this.logger.log('INFO', 'Sending request to Notifyre API', {
 				endpoint: '/fax/send',
@@ -379,51 +381,99 @@ export default class extends WorkerEntrypoint {
 				documentCount: notifyrePayload.Faxes.Documents.length,
 				hasTemplate: !!notifyrePayload.TemplateName
 			});
-			
+
 			const faxResult = await NotifyreApiUtils.makeRequest('/fax/send', 'POST', notifyrePayload, apiKey, this.logger);
-			
+
+			// Extract fax ID from the actual API response structure
+			const faxId = faxResult?.payload?.faxID || faxResult?.id;
+			const friendlyId = faxResult?.payload?.friendlyID;
+
 			// Log the API response
 			this.logger.log('INFO', 'Received response from Notifyre API', {
-				faxId: faxResult.id,
-				status: faxResult.status,
-				recipientCount: faxResult.recipients ? faxResult.recipients.length : 0,
-				pages: faxResult.pages,
-				cost: faxResult.cost,
-				hasError: !!faxResult.error,
-				errorMessage: faxResult.error || faxResult.errorMessage,
-				responseKeys: Object.keys(faxResult),
+				faxId: faxId,
+				friendlyId: friendlyId,
+				success: faxResult?.success,
+				statusCode: faxResult?.statusCode,
+				message: faxResult?.message,
+				hasErrors: faxResult?.errors?.length > 0,
+				responseKeys: Object.keys(faxResult || {}),
 				fullResponse: faxResult
 			});
 
-			this.logger.log('INFO', 'Fax submitted successfully', { faxId: faxResult.id });
-			
-			// Step 5: Return success response
+			// Validate fax result has required ID
+			if (!faxId) {
+				this.logger.log('ERROR', 'Notifyre API response missing fax ID', {
+					faxResult: faxResult,
+					hasId: !!faxId,
+					hasPayload: !!faxResult?.payload,
+					payloadKeys: faxResult?.payload ? Object.keys(faxResult.payload) : [],
+					responseKeys: Object.keys(faxResult || {})
+				});
+				throw new Error('Notifyre API did not return a valid fax ID');
+			}
+
+			this.logger.log('INFO', 'Fax submitted successfully', { faxId: faxId, friendlyId: friendlyId });
+
+			// Step 5: Save fax record to database
+			let savedFaxRecord = null;
+			const userId = context.jwtPayload?.sub || context.jwtPayload?.user_id || context.user?.id || null;
+			const isAnonymous = !userId;
+
+			this.logger.log('DEBUG', 'Processing fax record save', {
+				userId: userId || 'anonymous',
+				isAnonymous
+			});
+
+			// Prepare fax data for database save (for both authenticated and anonymous users)
+			const faxDataForSave = {
+				id: faxId,
+				status: 'queued', // Default status for new fax submissions
+				originalStatus: faxResult?.success ? 'Submitted' : 'Failed',
+				recipients: faxRequest.recipients || [],
+				senderId: faxRequest.senderId,
+				subject: faxRequest.subject || faxRequest.message,
+				pages: 1, // Default to 1 page for new submissions
+				cost: null, // Cost will be updated via webhooks
+				clientReference: faxRequest.clientReference || 'SendFaxPro',
+				sentAt: new Date().toISOString(),
+				completedAt: null,
+				errorMessage: faxResult?.errors?.length > 0 ? faxResult.errors.join(', ') : null,
+				notifyreResponse: faxResult,
+				friendlyId: friendlyId
+			};
+
+			// Save fax record for both authenticated and anonymous users
+			savedFaxRecord = await DatabaseUtils.saveFaxRecord(faxDataForSave, userId, this.env, this.logger);
+
+			// Step 6: Return success response
 			const responseData = {
 				statusCode: 200,
 				message: "Fax submitted successfully",
 				data: {
-					id: faxResult.id,
-					status: NOTIFYRE_STATUS_MAP[faxResult.status] || 'unknown',
-					originalStatus: faxResult.status,
+					id: faxId,
+					friendlyId: friendlyId,
+					status: 'queued',
+					originalStatus: faxResult?.success ? 'Submitted' : 'Failed',
 					message: "Fax has been queued for sending",
 					timestamp: new Date().toISOString(),
-					recipient: faxResult.recipients?.[0] || 'unknown',
-					pages: faxResult.pages || 1,
-					cost: faxResult.cost || null,
+					recipient: faxRequest.recipients?.[0] || 'unknown',
+					pages: 1,
+					cost: null,
 					notifyreResponse: faxResult
 				}
 			};
-			
+
 			this.logger.log('INFO', 'Returning successful fax response', {
 				faxId: responseData.data.id,
+				friendlyId: responseData.data.friendlyId,
 				status: responseData.data.status,
 				recipient: responseData.data.recipient ? responseData.data.recipient.replace(/\d/g, '*') : 'unknown',
 				pages: responseData.data.pages,
 				cost: responseData.data.cost
 			});
-			
+
 			return responseData;
-			
+
 		} catch (error) {
 			this.logger.log('ERROR', 'Error in sendFax', {
 				errorMessage: error.message,
@@ -432,7 +482,7 @@ export default class extends WorkerEntrypoint {
 				errorCode: error.code,
 				timestamp: new Date().toISOString()
 			});
-			
+
 			// Log additional context if available
 			if (this.env) {
 				this.logger.log('ERROR', 'Environment context during error', {
@@ -441,7 +491,7 @@ export default class extends WorkerEntrypoint {
 					envKeys: Object.keys(this.env).filter(key => !key.includes('KEY') && !key.includes('SECRET'))
 				});
 			}
-			
+
 			return {
 				statusCode: 500,
 				error: "Fax sending failed",
@@ -463,9 +513,9 @@ export default class extends WorkerEntrypoint {
 			this.env = JSON.parse(caller_env);
 			const context = JSON.parse(sagContext);
 			this.initializeLogger(this.env);
-			
+
 			this.logger.log('INFO', 'Get fax status request received');
-			
+
 			const apiKey = this.env.NOTIFYRE_API_KEY;
 			if (!apiKey) {
 				this.logger.log('ERROR', 'NOTIFYRE_API_KEY not configured');
@@ -474,20 +524,20 @@ export default class extends WorkerEntrypoint {
 
 			const url = new URL(request.url);
 			const faxId = url.searchParams.get('id');
-			
+
 			if (!faxId) {
 				throw new Error('Fax ID is required');
 			}
 
 			this.logger.log('INFO', 'Checking status for fax', { faxId });
-			
+
 			// Get fax details via Notifyre API
 			const faxDetails = await NotifyreApiUtils.makeRequest(`/fax/sent/${faxId}`, 'GET', null, apiKey, this.logger);
-			
+
 			if (!faxDetails) {
 				throw new Error('Fax not found');
 			}
-				
+
 			const statusResult = {
 				id: faxDetails.id,
 				status: NOTIFYRE_STATUS_MAP[faxDetails.status] || 'unknown',
@@ -502,15 +552,15 @@ export default class extends WorkerEntrypoint {
 				errorMessage: faxDetails.errorMessage || null,
 				notifyreResponse: faxDetails
 			};
-				
+
 			this.logger.log('INFO', 'Status retrieved successfully', { faxId, status: statusResult.status });
-			
+
 			return {
 				statusCode: 200,
 				message: "Status retrieved successfully",
 				data: statusResult
 			};
-			
+
 		} catch (error) {
 			this.logger.log('ERROR', 'Error in getFaxStatus:', error);
 			return {
@@ -521,325 +571,19 @@ export default class extends WorkerEntrypoint {
 		}
 	}
 
-	/**
-	 * List sent faxes
-	 * @param {Request} request - The incoming request
-	 * @param {string} caller_env - Stringified environment from caller
-	 * @param {string} sagContext - Stringified SAG context
-	 */
-	async listSentFaxes(request, caller_env, sagContext) {
-		try {
-			this.env = JSON.parse(caller_env);
-			const context = JSON.parse(sagContext);
-			this.initializeLogger(this.env);
-			
-			this.logger.log('INFO', 'List sent faxes request received');
-			
-			const apiKey = this.env.NOTIFYRE_API_KEY;
-			if (!apiKey) {
-				this.logger.log('ERROR', 'NOTIFYRE_API_KEY not configured');
-				throw new Error('Service configuration error');
-			}
 
-			const url = new URL(request.url);
-			const limit = parseInt(url.searchParams.get('limit') || '50');
-			const offset = parseInt(url.searchParams.get('offset') || '0');
-			const fromDate = url.searchParams.get('fromDate');
-			const toDate = url.searchParams.get('toDate');
 
-			// Build request parameters for API
-			const params = new URLSearchParams({
-				limit: limit.toString(),
-				offset: offset.toString()
-			});
 
-			if (fromDate) params.append('fromDate', fromDate);
-			if (toDate) params.append('toDate', toDate);
 
-			const response = await NotifyreApiUtils.makeRequest(`/fax/sent?${params.toString()}`, 'GET', null, apiKey, this.logger);
-			
-			// Transform response data
-			const transformedData = response.data?.map(fax => ({
-				id: fax.id,
-				status: NOTIFYRE_STATUS_MAP[fax.status] || 'unknown',
-				originalStatus: fax.status,
-				recipient: fax.recipients?.[0] || 'unknown',
-				pages: fax.pages || 0,
-				cost: fax.cost || null,
-				sentAt: fax.sentAt || null,
-				completedAt: fax.completedAt || null,
-				errorMessage: fax.errorMessage || null
-			})) || [];
-			
-			return {
-				statusCode: 200,
-				message: "Sent faxes retrieved successfully",
-				data: {
-					faxes: transformedData,
-					total: response.total || transformedData.length,
-					limit: parseInt(limit),
-					offset: parseInt(offset)
-				}
-			};
-			
-		} catch (error) {
-			this.logger.log('ERROR', 'Error in listSentFaxes:', error);
-			return {
-				statusCode: 500,
-				error: "Failed to retrieve sent faxes",
-				message: error.message
-			};
-		}
-	}
 
-	/**
-	 * List received faxes
-	 * @param {Request} request - The incoming request
-	 * @param {string} caller_env - Stringified environment from caller
-	 * @param {string} sagContext - Stringified SAG context
-	 */
-	async listReceivedFaxes(request, caller_env, sagContext) {
-		try {
-			this.log('INFO', 'List received faxes request received');
-			
-					this.env = JSON.parse(caller_env);
-		const context = JSON.parse(sagContext);
-		
-		const apiKey = this.env.NOTIFYRE_API_KEY;
-		if (!apiKey) {
-			this.log('ERROR', 'NOTIFYRE_API_KEY not configured');
-			throw new Error('Service configuration error');
-		}
 
-		const url = new URL(request.url);
-		const limit = parseInt(url.searchParams.get('limit') || '50');
-		const offset = parseInt(url.searchParams.get('offset') || '0');
-		const fromDate = url.searchParams.get('fromDate');
-		const toDate = url.searchParams.get('toDate');
 
-		// Build request parameters for API
-		const params = new URLSearchParams({
-			limit: limit.toString(),
-			offset: offset.toString()
-		});
 
-		if (fromDate) params.append('fromDate', fromDate);
-		if (toDate) params.append('toDate', toDate);
 
-		const response = await this.makeNotifyreRequest(`/fax/received?${params.toString()}`, 'GET', null, apiKey);
-			
-			// Transform response data
-			const transformedData = response.data?.map(fax => ({
-				id: fax.id,
-				sender: fax.sender || 'unknown',
-				pages: fax.pages || 0,
-				receivedAt: fax.receivedAt || null,
-				faxNumber: fax.faxNumber || null,
-				fileUrl: fax.fileUrl || null
-			})) || [];
-			
-			return {
-				statusCode: 200,
-				message: "Received faxes retrieved successfully",
-				data: {
-					faxes: transformedData,
-					total: response.total || transformedData.length,
-					limit: parseInt(limit),
-					offset: parseInt(offset)
-				}
-			};
-			
-		} catch (error) {
-			this.log('ERROR', 'Error in listReceivedFaxes:', error);
-			return {
-				statusCode: 500,
-				error: "Failed to retrieve received faxes",
-				message: error.message
-			};
-		}
-	}
 
-	/**
-	 * Download sent fax
-	 * @param {Request} request - The incoming request
-	 * @param {string} caller_env - Stringified environment from caller
-	 * @param {string} sagContext - Stringified SAG context
-	 */
-	async downloadSentFax(request, caller_env, sagContext) {
-		try {
-			this.log('INFO', 'Download sent fax request received');
-			
-					this.env = JSON.parse(caller_env);
-		const context = JSON.parse(sagContext);
-		
-		const apiKey = this.env.NOTIFYRE_API_KEY;
-		if (!apiKey) {
-			this.log('ERROR', 'NOTIFYRE_API_KEY not configured');
-			throw new Error('Service configuration error');
-		}
 
-		const url = new URL(request.url);
-		const faxId = url.searchParams.get('id');
-		
-		if (!faxId) {
-			throw new Error('Fax ID is required');
-		}
 
-		this.log('INFO', 'Downloading sent fax', { faxId });
-		
-		// Get fax download via manual API
-		const response = await this.makeNotifyreRequest(`/fax/sent/${faxId}/download`, 'GET', null, apiKey);
-			
-			return {
-				statusCode: 200,
-				message: "Fax downloaded successfully",
-				data: {
-					id: faxId,
-					fileData: response.fileData, // base64 encoded data
-					filename: response.filename || `fax_${faxId}.pdf`,
-					mimeType: response.mimeType || 'application/pdf'
-				}
-			};
-			
-		} catch (error) {
-			this.log('ERROR', 'Error in downloadSentFax:', error);
-			return {
-				statusCode: 500,
-				error: "Failed to download sent fax",
-				message: error.message
-			};
-		}
-	}
 
-	/**
-	 * Download received fax
-	 * @param {Request} request - The incoming request
-	 * @param {string} caller_env - Stringified environment from caller
-	 * @param {string} sagContext - Stringified SAG context
-	 */
-	async downloadReceivedFax(request, caller_env, sagContext) {
-		try {
-			this.log('INFO', 'Download received fax request received');
-			
-					this.env = JSON.parse(caller_env);
-		const context = JSON.parse(sagContext);
-		
-		const apiKey = this.env.NOTIFYRE_API_KEY;
-		if (!apiKey) {
-			this.log('ERROR', 'NOTIFYRE_API_KEY not configured');
-			throw new Error('Service configuration error');
-		}
-
-		const url = new URL(request.url);
-		const faxId = url.searchParams.get('id');
-		
-		if (!faxId) {
-			throw new Error('Fax ID is required');
-		}
-
-		this.log('INFO', 'Downloading received fax', { faxId });
-		
-		// Get fax download via manual API
-		const response = await this.makeNotifyreRequest(`/fax/received/${faxId}/download`, 'GET', null, apiKey);
-			
-			return {
-				statusCode: 200,
-				message: "Received fax downloaded successfully",
-				data: {
-					id: faxId,
-					fileData: response.fileData, // base64 encoded data
-					filename: response.filename || `received_fax_${faxId}.pdf`,
-					mimeType: response.mimeType || 'application/pdf'
-				}
-			};
-			
-		} catch (error) {
-			this.log('ERROR', 'Error in downloadReceivedFax:', error);
-			return {
-				statusCode: 500,
-				error: "Failed to download received fax",
-				message: error.message
-			};
-		}
-	}
-
-	/**
-	 * List fax numbers
-	 * @param {Request} request - The incoming request
-	 * @param {string} caller_env - Stringified environment from caller
-	 * @param {string} sagContext - Stringified SAG context
-	 */
-	async listFaxNumbers(request, caller_env, sagContext) {
-		try {
-			this.log('INFO', 'List fax numbers request received');
-			
-					this.env = JSON.parse(caller_env);
-		const context = JSON.parse(sagContext);
-		
-		const apiKey = this.env.NOTIFYRE_API_KEY;
-		if (!apiKey) {
-			this.log('ERROR', 'NOTIFYRE_API_KEY not configured');
-			throw new Error('Service configuration error');
-		}
-
-		const response = await this.makeNotifyreRequest('/fax/numbers', 'GET', null, apiKey);
-			
-			return {
-				statusCode: 200,
-				message: "Fax numbers retrieved successfully",
-				data: {
-					faxNumbers: response.data || []
-				}
-			};
-			
-		} catch (error) {
-			this.log('ERROR', 'Error in listFaxNumbers:', error);
-			return {
-				statusCode: 500,
-				error: "Failed to retrieve fax numbers",
-				message: error.message
-			};
-		}
-	}
-
-	/**
-	 * List cover pages
-	 * @param {Request} request - The incoming request
-	 * @param {string} caller_env - Stringified environment from caller
-	 * @param {string} sagContext - Stringified SAG context
-	 */
-	async listCoverPages(request, caller_env, sagContext) {
-		try {
-			this.log('INFO', 'List cover pages request received');
-			
-					this.env = JSON.parse(caller_env);
-		const context = JSON.parse(sagContext);
-		
-		const apiKey = this.env.NOTIFYRE_API_KEY;
-		if (!apiKey) {
-			this.log('ERROR', 'NOTIFYRE_API_KEY not configured');
-			throw new Error('Service configuration error');
-		}
-
-		const response = await this.makeNotifyreRequest('/fax/cover-pages', 'GET', null, apiKey);
-			
-			return {
-				statusCode: 200,
-				message: "Cover pages retrieved successfully",
-				data: {
-					coverPages: response.data || []
-				}
-			};
-			
-		} catch (error) {
-			this.log('ERROR', 'Error in listCoverPages:', error);
-			return {
-				statusCode: 500,
-				error: "Failed to retrieve cover pages",
-				message: error.message
-			};
-		}
-	}
 
 	/**
 	 * Handle Notifyre webhook for fax status updates
@@ -852,9 +596,9 @@ export default class extends WorkerEntrypoint {
 			this.env = JSON.parse(caller_env);
 			const context = JSON.parse(sagContext);
 			this.initializeLogger(this.env);
-			
+
 			this.logger.log('INFO', 'Notifyre webhook received');
-			
+
 			// Validate webhook secret/signature if configured
 			const webhookSecret = this.env.NOTIFYRE_WEBHOOK_SECRET;
 			if (webhookSecret) {
@@ -864,14 +608,14 @@ export default class extends WorkerEntrypoint {
 					return { error: 'Invalid webhook signature', statusCode: 401 };
 				}
 			}
-			
+
 			// Get webhook payload
 			const webhookPayload = await request.json();
-			this.logger.log('INFO', 'Processing Notifyre webhook', { 
+			this.logger.log('INFO', 'Processing Notifyre webhook', {
 				event: webhookPayload.event,
-				faxId: webhookPayload.data?.id 
+				faxId: webhookPayload.data?.id
 			});
-			
+
 			// Process the webhook based on event type
 			let processedData = null;
 			switch (webhookPayload.event) {
@@ -889,7 +633,7 @@ export default class extends WorkerEntrypoint {
 						errorMessage: webhookPayload.data.errorMessage || null
 					};
 					break;
-					
+
 				case 'fax.received':
 					processedData = {
 						id: webhookPayload.data.id,
@@ -899,34 +643,50 @@ export default class extends WorkerEntrypoint {
 						faxNumber: webhookPayload.data.faxNumber || null
 					};
 					break;
-					
+
 				default:
 					this.logger.log('WARN', 'Unknown webhook event type', { event: webhookPayload.event });
 					break;
 			}
-			
+
 			// Store webhook data in Supabase if needed
-			if (processedData && this.env.SUPABASE_URL && this.env.SUPABASE_KEY) {
+			if (processedData && this.env.SUPABASE_URL && this.env.SUPABASE_SERVICE_ROLE_KEY) {
 				try {
-					const supabase = DatabaseUtils.getSupabaseClient(this.env);
-					const { error } = await supabase
-						.from('fax_webhook_events')
-						.insert({
-							event_type: webhookPayload.event,
-							fax_id: processedData.id,
-							data: processedData,
-							raw_payload: webhookPayload,
-							processed_at: new Date().toISOString()
-						});
-						
-					if (error) {
-						this.logger.log('ERROR', 'Failed to store webhook event', { error });
+					// Store webhook event for audit trail
+					await DatabaseUtils.storeWebhookEvent({
+						event: webhookPayload.event,
+						faxId: processedData.id,
+						processedData: processedData,
+						rawPayload: webhookPayload
+					}, this.env, this.logger);
+
+					// Update fax record status for sent fax events
+					if (['fax.sent', 'fax.delivered', 'fax.failed'].includes(webhookPayload.event)) {
+						const updateData = {
+							status: processedData.status,
+							original_status: processedData.originalStatus,
+							completed_at: processedData.completedAt,
+							error_message: processedData.errorMessage,
+							pages: processedData.pages,
+							cost: processedData.cost,
+							metadata: webhookPayload.data || {}
+						};
+
+						const updatedRecord = await DatabaseUtils.updateFaxRecord(processedData.id, updateData, this.env, this.logger);
+
+						if (updatedRecord) {
+							this.logger.log('INFO', 'Fax record updated from webhook', {
+								faxId: processedData.id,
+								status: processedData.status,
+								event: webhookPayload.event
+							});
+						}
 					}
 				} catch (dbError) {
-					this.logger.log('ERROR', 'Database error storing webhook', { error: dbError.message });
+					this.logger.log('ERROR', 'Database error processing webhook', { error: dbError.message });
 				}
 			}
-			
+
 			const result = {
 				id: `webhook_${Date.now()}`,
 				status: "processed",
@@ -936,15 +696,15 @@ export default class extends WorkerEntrypoint {
 				data: processedData,
 				rawPayload: webhookPayload
 			};
-			
+
 			this.logger.log('INFO', 'Webhook processed successfully', { webhookId: result.id, event: webhookPayload.event });
-			
+
 			return {
 				statusCode: 200,
 				message: "Webhook processed successfully",
 				data: result
 			};
-			
+
 		} catch (error) {
 			this.logger.log('ERROR', 'Error in handleNotifyreWebhook:', error);
 			return {
@@ -967,19 +727,19 @@ export default class extends WorkerEntrypoint {
 			this.env = JSON.parse(caller_env);
 			const context = JSON.parse(sagContext);
 			this.initializeLogger(this.env);
-			
+
 			this.logger.log('INFO', 'Supabase user created webhook received');
-			
+
 			// Validate webhook secret
 			if (!WebhookUtils.validateSupabaseWebhookSecret(request, this.env)) {
 				this.logger.log('WARN', 'Invalid webhook secret in Supabase user creation');
 				return { error: 'Invalid webhook secret', statusCode: 401 };
 			}
-			
+
 			// Get webhook payload
 			const webhookPayload = await request.json();
 			this.logger.log('INFO', 'Processing user creation webhook', { user: webhookPayload.record });
-			
+
 			// Process user creation webhook
 			const result = {
 				id: `webhook_${Date.now()}`,
@@ -989,15 +749,15 @@ export default class extends WorkerEntrypoint {
 				user: webhookPayload.record || webhookPayload.user || webhookPayload,
 				event: webhookPayload.type || "user.created"
 			};
-			
+
 			this.logger.log('INFO', 'Webhook processed successfully', { webhookId: result.id });
-			
+
 			return {
 				statusCode: 200,
 				message: "Webhook processed successfully",
 				data: result
 			};
-			
+
 		} catch (error) {
 			this.logger.log('ERROR', 'Error in handleSupabaseWebhookPostUserCreated:', error);
 			return {
@@ -1020,7 +780,7 @@ export default class extends WorkerEntrypoint {
 			this.env = JSON.parse(caller_env);
 			this.initializeLogger(this.env);
 			this.logger.log('INFO', 'Health check request received');
-			
+
 			return {
 				statusCode: 200,
 				message: "Notifyre Fax service healthy",
@@ -1031,11 +791,6 @@ export default class extends WorkerEntrypoint {
 					features: [
 						"send-fax",
 						"get-status",
-						"list-sent-faxes",
-						"list-received-faxes",
-						"download-faxes",
-						"fax-numbers",
-						"cover-pages",
 						"webhooks"
 					]
 				}
@@ -1066,10 +821,10 @@ export default class extends WorkerEntrypoint {
 			this.env = JSON.parse(caller_env);
 			this.initializeLogger(this.env);
 			this.logger.log('INFO', 'Protected health check request received');
-			
+
 			// Parse sagContext to extract user info if available
 			const context = JSON.parse(sagContext || '{}');
-			
+
 			this.logger.log('INFO', 'Authenticated health check', { user: context.jwtPayload?.sub });
 
 			return {
@@ -1084,11 +839,6 @@ export default class extends WorkerEntrypoint {
 					features: [
 						"send-fax",
 						"get-status",
-						"list-sent-faxes",
-						"list-received-faxes",
-						"download-faxes",
-						"fax-numbers",
-						"cover-pages",
 						"webhooks"
 					]
 				}

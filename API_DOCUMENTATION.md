@@ -20,7 +20,7 @@ Authorization: Bearer <your-jwt-token>
 - `NOTIFYRE_API_KEY`: Your Notifyre API key
 - `NOTIFYRE_WEBHOOK_SECRET`: (Optional) Secret for webhook signature verification
 - `SUPABASE_URL`: Supabase project URL
-- `SUPABASE_KEY`: Supabase service role key
+- `SUPABASE_SERVICE_ROLE_KEY`: Supabase service role key
 - `SUPABASE_JWT_SECRET`: JWT secret for token verification
 
 ## API Endpoints
@@ -546,7 +546,7 @@ curl -X GET "https://api.sendfax.pro/v1/fax/sent/download?id=fax_123456" \
 export NOTIFYRE_API_KEY="your_notifyre_api_key"
 export NOTIFYRE_WEBHOOK_SECRET="your_webhook_secret"
 export SUPABASE_URL="your_supabase_url"
-export SUPABASE_KEY="your_supabase_key"
+export SUPABASE_SERVICE_ROLE_KEY="your_SUPABASE_SERVICE_ROLE_KEY"
 export SUPABASE_JWT_SECRET="your_jwt_secret"
 ```
 

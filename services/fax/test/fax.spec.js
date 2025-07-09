@@ -12,6 +12,23 @@ vi.mock('@supabase/supabase-js', () => ({
 	}))
 }));
 
+// Mock DatabaseUtils
+vi.mock('../src/database.js', () => ({
+	DatabaseUtils: {
+		getSupabaseAdminClient: vi.fn(() => ({
+			from: vi.fn(() => ({
+				select: vi.fn(() => ({ eq: vi.fn() })),
+				insert: vi.fn(() => ({ select: vi.fn(() => ({ single: vi.fn(() => ({ data: { id: 'test-id' }, error: null })) })) })),
+				update: vi.fn(() => ({ eq: vi.fn(() => ({ select: vi.fn(() => ({ single: vi.fn(() => ({ data: { id: 'test-id' }, error: null })) })) })) }))
+			}))
+		})),
+		saveFaxRecord: vi.fn().mockResolvedValue({ id: 'saved-fax-123', notifyre_fax_id: 'fax_mock_123' }),
+		updateFaxRecord: vi.fn().mockResolvedValue({ id: 'updated-fax-123' }),
+		
+		storeWebhookEvent: vi.fn().mockResolvedValue(true)
+	}
+}));
+
 // Mock WorkerEntrypoint to avoid module issues
 vi.mock('cloudflare:workers', () => ({
 	WorkerEntrypoint: class MockWorkerEntrypoint {
@@ -25,6 +42,8 @@ vi.mock('cloudflare:workers', () => ({
 global.fetch = vi.fn();
 
 import FaxService from '../src/fax.js';
+import { DatabaseUtils } from '../src/database.js';
+import { NotifyreApiUtils } from '../src/utils.js';
 
 describe('Fax Service', () => {
 	let faxService;
@@ -35,7 +54,7 @@ describe('Fax Service', () => {
 		mockEnv = {
 			NOTIFYRE_API_KEY: 'test-notifyre-key',
 			SUPABASE_URL: 'https://test.supabase.co',
-			SUPABASE_KEY: 'test-key',
+			SUPABASE_SERVICE_ROLE_KEY: 'test-service-role-key',
 			SUPABASE_WEBHOOK_SECRET: 'test-webhook-secret',
 			LOG_LEVEL: 'DEBUG'
 		};
@@ -72,11 +91,14 @@ describe('Fax Service', () => {
 				return Promise.resolve({
 					ok: true,
 					json: () => Promise.resolve({
-						id: 'fax_mock_123',
-						status: 'Preparing',
-						recipients: ['1234567890'],
-						pages: 1,
-						cost: 0.03
+						payload: {
+							faxID: 'fax_mock_123',
+							friendlyID: 'TEST123'
+						},
+						success: true,
+						statusCode: 200,
+						message: "OK",
+						errors: []
 					})
 				});
 			}
@@ -198,8 +220,8 @@ describe('Fax Service', () => {
 			const result = await faxService.sendFax(request, JSON.stringify(mockEnv), JSON.stringify(mockSagContext));
 			expect(result.statusCode).toBe(200);
 			expect(result.message).toBe('Fax submitted successfully');
-			expect(result.data.recipient).toBe('1234567890');
-			expect(result.data.status).toBe('preparing');
+			expect(result.data.recipient).toBe('+1234567890');
+			expect(result.data.status).toBe('queued');
 		});
 
 		it('should handle empty request body', async () => {
@@ -209,8 +231,67 @@ describe('Fax Service', () => {
 
 			const result = await faxService.sendFax(request, JSON.stringify(mockEnv), JSON.stringify(mockSagContext));
 			expect(result.statusCode).toBe(200);
-			expect(result.data.recipient).toBe('1234567890');
+			expect(result.data.recipient).toBe('unknown');
 			expect(result.data.pages).toBe(1);
+		});
+
+		it('should call DatabaseUtils.saveFaxRecord during fax sending', async () => {
+			const request = new Request('https://api.sendfax.pro/v1/fax/send', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					recipient: '+1234567890',
+					message: 'Test fax message'
+				})
+			});
+
+			const result = await faxService.sendFax(request, JSON.stringify(mockEnv), JSON.stringify(mockSagContext));
+			
+			expect(result.statusCode).toBe(200);
+			expect(DatabaseUtils.saveFaxRecord).toHaveBeenCalledWith(
+				expect.objectContaining({
+					id: 'fax_mock_123',
+					friendlyId: 'TEST123',
+					status: 'queued',
+					recipients: ['+1234567890']
+				}),
+				'test-user-123', // userId from context
+				mockEnv,
+				expect.any(Object) // logger
+			);
+		});
+
+		it('should handle Notifyre API response without valid ID', async () => {
+			// Mock Notifyre API to return response without ID
+			const originalMakeRequest = NotifyreApiUtils.makeRequest;
+			NotifyreApiUtils.makeRequest = vi.fn().mockResolvedValue({
+				payload: {
+					// Missing 'faxID' field
+					friendlyID: 'TEST123'
+				},
+				success: true,
+				statusCode: 200,
+				message: "OK",
+				errors: []
+			});
+
+			const request = new Request('https://api.sendfax.pro/v1/fax/send', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					recipient: '+1234567890',
+					message: 'Test fax message'
+				})
+			});
+
+			const result = await faxService.sendFax(request, JSON.stringify(mockEnv), JSON.stringify(mockSagContext));
+			
+			expect(result.statusCode).toBe(500);
+			expect(result.error).toBe('Fax sending failed');
+			expect(result.message).toBe('Notifyre API did not return a valid fax ID');
+
+			// Restore original mock
+			NotifyreApiUtils.makeRequest = originalMakeRequest;
 		});
 	});
 
@@ -256,6 +337,54 @@ describe('Fax Service', () => {
 		});
 	});
 
+	describe('handleNotifyreWebhook', () => {
+		it('should call DatabaseUtils methods for webhook processing', async () => {
+			const request = new Request('https://api.sendfax.pro/webhook/notifyre', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					event: 'fax.delivered',
+					data: {
+						id: 'fax_123',
+						status: 'Successful',
+						recipients: ['+1234567890'],
+						pages: 2,
+						cost: 0.05,
+						completedAt: '2024-01-01T00:05:00Z'
+					}
+				})
+			});
+
+			const result = await faxService.handleNotifyreWebhook(request, JSON.stringify(mockEnv), JSON.stringify(mockSagContext));
+			
+			expect(result.statusCode).toBe(200);
+			expect(result.message).toBe('Webhook processed successfully');
+			
+			// Verify webhook event was stored
+			expect(DatabaseUtils.storeWebhookEvent).toHaveBeenCalledWith(
+				expect.objectContaining({
+					event: 'fax.delivered',
+					faxId: 'fax_123'
+				}),
+				mockEnv,
+				expect.any(Object) // logger
+			);
+
+			// Verify fax record was updated
+			expect(DatabaseUtils.updateFaxRecord).toHaveBeenCalledWith(
+				'fax_123',
+				expect.objectContaining({
+					status: 'delivered',
+					original_status: 'Successful',
+					pages: 2,
+					cost: 0.05
+				}),
+				mockEnv,
+				expect.any(Object) // logger
+			);
+		});
+	});
+
 	describe('getFaxStatus', () => {
 		it('should return fax status', async () => {
 			const request = new Request('https://api.sendfax.pro/v1/fax/status?id=fax_123', { method: 'GET' });
@@ -263,9 +392,11 @@ describe('Fax Service', () => {
 			expect(result.statusCode).toBe(200);
 			expect(result.message).toBe('Status retrieved successfully');
 			expect(result.data.id).toBe('fax_123');
-			expect(result.data.status).toBe('sent');
+			expect(result.data.status).toBe('delivered');
 		});
 	});
+
+
 
 	describe('health handlers', () => {
 		it('should return healthy status (unauthenticated)', async () => {

@@ -19,7 +19,7 @@ import path from 'path';
 
 // Configuration
 const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 // Get credentials from command line args or environment variables
 const email = process.argv[2] || process.env.SUPABASE_TEST_EMAIL;
@@ -36,7 +36,7 @@ async function authenticateSupabase() {
         }
         
         if (!SUPABASE_ANON_KEY) {
-            throw new Error('SUPABASE_ANON_KEY or SUPABASE_KEY environment variable is required');
+            throw new Error('SUPABASE_ANON_KEY or SUPABASE_SERVICE_ROLE_KEY environment variable is required');
         }
         
         if (!email || !password) {
