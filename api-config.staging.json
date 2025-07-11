@@ -73,27 +73,6 @@
             },
             "auth": true
         },
-
-        {
-            "method": "POST",
-            "path": "/v1/fax/webhook/notifyre",
-            "integration": {
-                "type": "service_binding",
-                "binding": "fax_service",
-                "function": "handleNotifyreWebhook"
-            },
-            "auth": false
-        },
-        {
-            "method": "POST",
-            "path": "/v1/fax/webhook/user-created",
-            "integration": {
-                "type": "service_binding",
-                "binding": "fax_service",
-                "function": "handleSupabaseWebhookPostUserCreated"
-            },
-            "auth": false
-        },
         {
             "method": "GET",
             "path": "/v1/fax/health",
