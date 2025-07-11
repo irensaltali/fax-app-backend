@@ -1,0 +1,48 @@
+name = "sendfax-cron"
+main = "src/cron.js"
+compatibility_date = "2025-07-04"
+compatibility_flags = ["nodejs_compat"]
+send_metrics = true
+minify = false
+workers_dev = false
+
+[vars]
+LOG_LEVEL = "DEBUG"
+ENVIRONMENT = "staging"
+SUPABASE_URL = "https://vqdpahsrwtaccjozuchj.supabase.co" 
+
+[triggers]
+crons = [
+	"* * * * *",  # Every minute - fax status polling
+]
+
+[env.staging]
+name = "sendfax-cron-staging"
+
+[env.staging.vars]
+LOG_LEVEL = "DEBUG"
+ENVIRONMENT = "staging"
+SUPABASE_URL = "https://vqdpahsrwtaccjozuchj.supabase.co"
+
+[env.staging.observability]
+enabled = true
+
+[env.staging.triggers]
+crons = [
+	"* * * * *",  # Every minute - fax status polling
+]
+
+[env.prod]
+name = "sendfax-cron-prod"
+minify = true
+
+
+[env.prod.observability]
+enabled = true
+
+[env.prod.vars]
+LOG_LEVEL = "INFO"
+ENVIRONMENT = "prod"
+
+# Cron triggers for different tasks
+

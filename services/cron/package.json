@@ -1,0 +1,21 @@
+{
+	"name": "sendfax-cron",
+	"version": "0.0.0",
+	"private": true,
+	"scripts": {
+		"deploy": "wrangler deploy",
+		"dev": "wrangler dev",
+		"test": "vitest",
+		"test:watch": "vitest",
+		"start": "wrangler dev"
+	},
+	"devDependencies": {
+		"@cloudflare/workers-types": "^4.20241127.0",
+		"vitest": "^2.1.4",
+		"vitest-environment-miniflare": "^2.14.4",
+		"wrangler": "^3.100.0"
+	},
+	"dependencies": {
+		"@supabase/supabase-js": "^2.39.3"
+	}
+}
