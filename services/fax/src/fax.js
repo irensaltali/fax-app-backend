@@ -9,7 +9,6 @@ import {
 	Logger,
 	FileUtils,
 	NotifyreApiUtils,
-	WebhookUtils,
 	NOTIFYRE_STATUS_MAP
 } from './utils.js';
 import { DatabaseUtils } from './database.js';
@@ -31,6 +30,8 @@ export default class extends WorkerEntrypoint {
 			this.logger = new Logger(env);
 		}
 	}
+
+
 
 	/**
 	 * Parse and validate request body
@@ -350,18 +351,12 @@ export default class extends WorkerEntrypoint {
 				authorization: request.headers.get('authorization') ? 'Bearer [REDACTED]' : 'none'
 			});
 
-			// Validate API key
-			const apiKey = this.env.NOTIFYRE_API_KEY;
+			// Validate API key from Secrets Store
+			const apiKey = await this.env.NOTIFYRE_API_KEY;
 			if (!apiKey) {
-				this.logger.log('ERROR', 'NOTIFYRE_API_KEY not configured');
+				this.logger.log('ERROR', 'NOTIFYRE_API_KEY not configured in secrets store or environment');
 				throw new Error('Service configuration error');
 			}
-
-			this.logger.log('DEBUG', 'API Key configured for sendFax', {
-				hasApiKey: !!apiKey,
-				apiKeyLength: apiKey ? apiKey.length : 0,
-				apiKeyPrefix: apiKey ? apiKey.substring(0, 8) + '...' : 'none'
-			});
 
 			// Step 1: Parse request body  
 			const requestBody = await this.parseRequestBody(request);
@@ -433,7 +428,7 @@ export default class extends WorkerEntrypoint {
 				senderId: faxRequest.senderId,
 				subject: faxRequest.subject || faxRequest.message,
 				pages: 1, // Default to 1 page for new submissions
-				cost: null, // Cost will be updated via webhooks
+				cost: null, // Cost will be updated via polling
 				clientReference: faxRequest.clientReference || 'SendFaxPro',
 				sentAt: new Date().toISOString(),
 				completedAt: null,
@@ -516,9 +511,9 @@ export default class extends WorkerEntrypoint {
 
 			this.logger.log('INFO', 'Get fax status request received');
 
-			const apiKey = this.env.NOTIFYRE_API_KEY;
+			const apiKey = await this.env.NOTIFYRE_API_KEY;
 			if (!apiKey) {
-				this.logger.log('ERROR', 'NOTIFYRE_API_KEY not configured');
+				this.logger.log('ERROR', 'NOTIFYRE_API_KEY not configured in secrets store or environment');
 				throw new Error('Service configuration error');
 			}
 
@@ -585,189 +580,9 @@ export default class extends WorkerEntrypoint {
 
 
 
-	/**
-	 * Handle Notifyre webhook for fax status updates
-	 * @param {Request} request - The incoming request
-	 * @param {string} caller_env - Stringified environment from caller
-	 * @param {string} sagContext - Stringified SAG context
-	 */
-	async handleNotifyreWebhook(request, caller_env, sagContext) {
-		try {
-			this.env = JSON.parse(caller_env);
-			const context = JSON.parse(sagContext);
-			this.initializeLogger(this.env);
 
-			this.logger.log('INFO', 'Notifyre webhook received');
 
-			// Validate webhook secret/signature if configured
-			const webhookSecret = this.env.NOTIFYRE_WEBHOOK_SECRET;
-			if (webhookSecret) {
-				const signature = request.headers.get('X-Notifyre-Signature');
-				if (!await WebhookUtils.verifyNotifyreSignature(request, webhookSecret, signature, this.logger)) {
-					this.logger.log('WARN', 'Invalid webhook signature from Notifyre');
-					return { error: 'Invalid webhook signature', statusCode: 401 };
-				}
-			}
 
-			// Get webhook payload
-			const webhookPayload = await request.json();
-			this.logger.log('INFO', 'Processing Notifyre webhook', {
-				event: webhookPayload.event,
-				faxId: webhookPayload.data?.id
-			});
-
-			// Process the webhook based on event type
-			let processedData = null;
-			switch (webhookPayload.event) {
-				case 'fax.sent':
-				case 'fax.delivered':
-				case 'fax.failed':
-					processedData = {
-						id: webhookPayload.data.id,
-						status: NOTIFYRE_STATUS_MAP[webhookPayload.data.status] || 'unknown',
-						originalStatus: webhookPayload.data.status,
-						recipient: webhookPayload.data.recipients?.[0] || 'unknown',
-						pages: webhookPayload.data.pages || 0,
-						cost: webhookPayload.data.cost || null,
-						completedAt: webhookPayload.data.completedAt || new Date().toISOString(),
-						errorMessage: webhookPayload.data.errorMessage || null
-					};
-					break;
-
-				case 'fax.received':
-					processedData = {
-						id: webhookPayload.data.id,
-						sender: webhookPayload.data.sender || 'unknown',
-						pages: webhookPayload.data.pages || 0,
-						receivedAt: webhookPayload.data.receivedAt || new Date().toISOString(),
-						faxNumber: webhookPayload.data.faxNumber || null
-					};
-					break;
-
-				default:
-					this.logger.log('WARN', 'Unknown webhook event type', { event: webhookPayload.event });
-					break;
-			}
-
-			// Store webhook data in Supabase if needed
-			if (processedData && this.env.SUPABASE_URL && this.env.SUPABASE_SERVICE_ROLE_KEY) {
-				try {
-					// Store webhook event for audit trail
-					await DatabaseUtils.storeWebhookEvent({
-						event: webhookPayload.event,
-						faxId: processedData.id,
-						processedData: processedData,
-						rawPayload: webhookPayload
-					}, this.env, this.logger);
-
-					// Update fax record status for sent fax events
-					if (['fax.sent', 'fax.delivered', 'fax.failed'].includes(webhookPayload.event)) {
-						const updateData = {
-							status: processedData.status,
-							original_status: processedData.originalStatus,
-							completed_at: processedData.completedAt,
-							error_message: processedData.errorMessage,
-							pages: processedData.pages,
-							cost: processedData.cost,
-							metadata: webhookPayload.data || {}
-						};
-
-						const updatedRecord = await DatabaseUtils.updateFaxRecord(processedData.id, updateData, this.env, this.logger);
-
-						if (updatedRecord) {
-							this.logger.log('INFO', 'Fax record updated from webhook', {
-								faxId: processedData.id,
-								status: processedData.status,
-								event: webhookPayload.event
-							});
-						}
-					}
-				} catch (dbError) {
-					this.logger.log('ERROR', 'Database error processing webhook', { error: dbError.message });
-				}
-			}
-
-			const result = {
-				id: `webhook_${Date.now()}`,
-				status: "processed",
-				message: "Notifyre webhook processed successfully",
-				timestamp: new Date().toISOString(),
-				event: webhookPayload.event,
-				data: processedData,
-				rawPayload: webhookPayload
-			};
-
-			this.logger.log('INFO', 'Webhook processed successfully', { webhookId: result.id, event: webhookPayload.event });
-
-			return {
-				statusCode: 200,
-				message: "Webhook processed successfully",
-				data: result
-			};
-
-		} catch (error) {
-			this.logger.log('ERROR', 'Error in handleNotifyreWebhook:', error);
-			return {
-				statusCode: 500,
-				error: "Webhook processing failed",
-				message: error.message,
-				details: error.stack
-			};
-		}
-	}
-
-	/**
-	 * Handle Supabase webhook for user creation
-	 * @param {Request} request - The incoming request
-	 * @param {string} caller_env - Stringified environment from caller
-	 * @param {string} sagContext - Stringified SAG context
-	 */
-	async handleSupabaseWebhookPostUserCreated(request, caller_env, sagContext) {
-		try {
-			this.env = JSON.parse(caller_env);
-			const context = JSON.parse(sagContext);
-			this.initializeLogger(this.env);
-
-			this.logger.log('INFO', 'Supabase user created webhook received');
-
-			// Validate webhook secret
-			if (!WebhookUtils.validateSupabaseWebhookSecret(request, this.env)) {
-				this.logger.log('WARN', 'Invalid webhook secret in Supabase user creation');
-				return { error: 'Invalid webhook secret', statusCode: 401 };
-			}
-
-			// Get webhook payload
-			const webhookPayload = await request.json();
-			this.logger.log('INFO', 'Processing user creation webhook', { user: webhookPayload.record });
-
-			// Process user creation webhook
-			const result = {
-				id: `webhook_${Date.now()}`,
-				status: "processed",
-				message: "User creation webhook processed successfully",
-				timestamp: new Date().toISOString(),
-				user: webhookPayload.record || webhookPayload.user || webhookPayload,
-				event: webhookPayload.type || "user.created"
-			};
-
-			this.logger.log('INFO', 'Webhook processed successfully', { webhookId: result.id });
-
-			return {
-				statusCode: 200,
-				message: "Webhook processed successfully",
-				data: result
-			};
-
-		} catch (error) {
-			this.logger.log('ERROR', 'Error in handleSupabaseWebhookPostUserCreated:', error);
-			return {
-				statusCode: 500,
-				error: "Webhook processing failed",
-				message: error.message,
-				details: error.stack
-			};
-		}
-	}
 
 	/**
 	 * Health check (unauthenticated)
@@ -839,7 +654,7 @@ export default class extends WorkerEntrypoint {
 					features: [
 						"send-fax",
 						"get-status",
-						"webhooks"
+						"polling"
 					]
 				}
 			};
@@ -857,6 +672,8 @@ export default class extends WorkerEntrypoint {
 			};
 		}
 	}
+
+
 
 
 }

@@ -3,8 +3,8 @@ main = "src/fax.js"
 compatibility_date = "2025-07-04"
 compatibility_flags = ["nodejs_compat"]
 send_metrics = true
-minify = true
-workers_dev = true
+minify = false
+workers_dev = false
 
 [observability]
 enabled = true
@@ -15,8 +15,10 @@ name = "fax-service-staging"
 [env.staging.observability]
 enabled = true
 
+
 [env.prod]
 name = "fax-service-prod" 
+minify = true
 
 [env.prod.observability]
 enabled = true

@@ -227,22 +227,56 @@ export class NotifyreApiUtils {
 			}
 		}
 
+		// Log request details with full body (sanitized for sensitive data)
+		let requestBodyLog = null;
+		if (options.body) {
+			if (data instanceof FormData) {
+				requestBodyLog = 'FormData object (not logged due to binary content)';
+			} else if (typeof data === 'object' && data !== null) {
+				// Create a deep copy and sanitize sensitive data
+				const sanitizedData = JSON.parse(JSON.stringify(data));
+				if (sanitizedData.Faxes?.Documents) {
+					sanitizedData.Faxes.Documents = sanitizedData.Faxes.Documents.map((doc, index) => ({
+						Filename: doc.Filename,
+						Data: doc.Data ? `[BASE64_DATA_${doc.Data.length}_CHARS]` : null
+					}));
+				}
+				requestBodyLog = sanitizedData;
+			} else {
+				requestBodyLog = options.body;
+			}
+		}
+
 		logger.log('DEBUG', 'Making Notifyre API request', { 
 			url, 
 			method, 
 			hasData: !!data,
 			hasApiKey: !!apiKey,
-			apiKeyPrefix: apiKey ? apiKey.substring(0, 8) + '...' : 'none',
+			apiKeyPrefix: apiKey && typeof apiKey === 'string' ? apiKey.substring(0, 8) + '...' : 'none',
 			headers: {
-				'x-api-token': apiKey ? apiKey.substring(0, 8) + '...' : 'none',
+				'x-api-token': apiKey && typeof apiKey === 'string' ? apiKey.substring(0, 8) + '...' : 'none',
 				'Content-Type': options.headers['Content-Type'],
 				'User-Agent': options.headers['User-Agent']
-			}
+			},
+			requestBody: requestBodyLog
 		});
 
 		try {
 			const response = await fetch(url, options);
 			const responseData = await response.json();
+
+			// Log full response body
+			logger.log('DEBUG', 'Notifyre API response received', {
+				url,
+				status: response.status,
+				statusText: response.statusText,
+				ok: response.ok,
+				headers: {
+					'content-type': response.headers?.get ? response.headers.get('content-type') : 'unknown',
+					'content-length': response.headers?.get ? response.headers.get('content-length') : 'unknown'
+				},
+				responseBody: responseData
+			});
 
 			if (!response.ok) {
 				logger.log('ERROR', 'Notifyre API error', {
@@ -321,18 +355,36 @@ export class WebhookUtils {
  * Constants and mappings
  */
 export const NOTIFYRE_STATUS_MAP = {
+	// Initial/Processing States
 	'Preparing': 'queued',
+	'Queued': 'queued',
 	'In Progress': 'processing',
+	'Processing': 'processing',
 	'Sending': 'sending',
+	
+	// Success States
 	'Successful': 'delivered',
 	'Delivered': 'delivered',
+	'Sent': 'delivered', // Additional mapping for fax.sent events
+	
+	// Receiving States
+	'Receiving': 'receiving',
+	'Received': 'delivered', // For received faxes
+	
+	// Failure States
 	'Failed': 'failed',
 	'Failed - Busy': 'busy',
 	'Failed - No Answer': 'no-answer',
 	'Failed - Check number and try again': 'failed',
 	'Failed - Connection not a Fax Machine': 'failed',
+	
+	// Cancellation
 	'Cancelled': 'cancelled',
-	'Queued': 'queued',
-	'Processing': 'processing',
-	'Receiving': 'receiving'
+	
+	// Additional status codes that may appear in webhooks
+	'Completed': 'delivered',
+	'Error': 'failed',
+	'Timeout': 'failed',
+	'Rejected': 'failed',
+	'Aborted': 'cancelled'
 }; 

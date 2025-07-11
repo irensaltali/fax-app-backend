@@ -505,36 +505,57 @@ describe('Utils Module', () => {
 	describe('NOTIFYRE_STATUS_MAP', () => {
 		it('should have correct status mappings', () => {
 			expect(NOTIFYRE_STATUS_MAP).toEqual({
+				// Initial/Processing States
 				'Preparing': 'queued',
+				'Queued': 'queued',
 				'In Progress': 'processing',
+				'Processing': 'processing',
 				'Sending': 'sending',
+				
+				// Success States
 				'Successful': 'delivered',
 				'Delivered': 'delivered',
+				'Sent': 'delivered', // Additional mapping for fax.sent events
+				
+				// Receiving States
+				'Receiving': 'receiving',
+				'Received': 'delivered', // For received faxes
+				
+				// Failure States
 				'Failed': 'failed',
 				'Failed - Busy': 'busy',
 				'Failed - No Answer': 'no-answer',
 				'Failed - Check number and try again': 'failed',
 				'Failed - Connection not a Fax Machine': 'failed',
+				
+				// Cancellation
 				'Cancelled': 'cancelled',
-				'Queued': 'queued',
-				'Processing': 'processing',
-				'Receiving': 'receiving'
+				
+				// Additional status codes that may appear in webhooks
+				'Completed': 'delivered',
+				'Error': 'failed',
+				'Timeout': 'failed',
+				'Rejected': 'failed',
+				'Aborted': 'cancelled'
 			});
 		});
 
 		it('should map all expected Notifyre statuses', () => {
-			const expectedStatuses = [
-				'Preparing', 'In Progress', 'Sending', 'Successful', 'Delivered',
-				'Failed', 'Failed - Busy', 'Failed - No Answer', 
-				'Failed - Check number and try again',
-				'Failed - Connection not a Fax Machine', 'Cancelled',
-				'Queued', 'Processing', 'Receiving'
-			];
-
-			expectedStatuses.forEach(status => {
-				expect(NOTIFYRE_STATUS_MAP).toHaveProperty(status);
-				expect(typeof NOTIFYRE_STATUS_MAP[status]).toBe('string');
-			});
+			// Test some key mappings
+			expect(NOTIFYRE_STATUS_MAP['Successful']).toBe('delivered');
+			expect(NOTIFYRE_STATUS_MAP['Sent']).toBe('delivered');
+			expect(NOTIFYRE_STATUS_MAP['Failed - Busy']).toBe('busy');
+			expect(NOTIFYRE_STATUS_MAP['Failed - No Answer']).toBe('no-answer');
+			expect(NOTIFYRE_STATUS_MAP['Preparing']).toBe('queued');
+			expect(NOTIFYRE_STATUS_MAP['Cancelled']).toBe('cancelled');
+			
+			// Test new mappings
+			expect(NOTIFYRE_STATUS_MAP['Completed']).toBe('delivered');
+			expect(NOTIFYRE_STATUS_MAP['Error']).toBe('failed');
+			expect(NOTIFYRE_STATUS_MAP['Timeout']).toBe('failed');
+			expect(NOTIFYRE_STATUS_MAP['Rejected']).toBe('failed');
+			expect(NOTIFYRE_STATUS_MAP['Aborted']).toBe('cancelled');
+			expect(NOTIFYRE_STATUS_MAP['Received']).toBe('delivered');
 		});
 	});
 }); 
