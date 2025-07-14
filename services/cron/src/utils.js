@@ -67,6 +67,10 @@ export class NotifyreApiUtils {
 			const response = await fetch(url, options);
 			const responseData = await response.json();
 
+			logger.log('DEBUG', 'Notifyre API response', {
+				responseData
+			});
+
 			if (!response.ok) {
 				logger.log('ERROR', 'Notifyre API error', {
 					status: response.status,
@@ -119,15 +123,29 @@ export class NotifyreApiUtils {
 			const endpoint = `/fax/send?sort=desc&fromDate=${fromDate}&toDate=${toDate}&skip=0&limit=1000`;
 			const response = await this.makeRequest(endpoint, 'GET', null, apiKey, logger);
 
-			// Handle different response formats
+			// Handle new response format with payload.faxes
 			let faxes = [];
-			if (response.data && Array.isArray(response.data)) {
+			if (response.payload && response.payload.faxes) {
+				// Convert faxes object to array
+				const faxesObject = response.payload.faxes;
+				faxes = Object.values(faxesObject);
+				
+				logger.log('DEBUG', 'Processed faxes from new API format', {
+					totalFromAPI: response.payload.total,
+					faxesProcessed: faxes.length,
+					success: response.success,
+					statusCode: response.statusCode
+				});
+			} else if (response.data && Array.isArray(response.data)) {
+				// Fallback for old format
 				faxes = response.data;
 			} else if (Array.isArray(response)) {
+				// Fallback for direct array format
 				faxes = response;
 			} else {
 				logger.log('WARN', 'Unexpected response format from Notifyre API', {
 					responseKeys: Object.keys(response || {}),
+					hasPayload: !!response.payload,
 					hasData: !!response.data
 				});
 				faxes = [];
@@ -157,38 +175,91 @@ export class NotifyreApiUtils {
 export const NOTIFYRE_STATUS_MAP = {
 	// Initial/Processing States
 	'Preparing': 'queued',
+	'preparing': 'queued',
 	'Queued': 'queued',
+	'queued': 'queued',
 	'In Progress': 'processing',
+	'in progress': 'processing',
 	'Processing': 'processing',
+	'processing': 'processing',
 	'Sending': 'sending',
+	'sending': 'sending',
 	
 	// Success States
 	'Successful': 'delivered',
+	'successful': 'delivered',
 	'Delivered': 'delivered',
+	'delivered': 'delivered',
 	'Sent': 'delivered', // Additional mapping for fax.sent events
+	'sent': 'delivered',
 	
 	// Receiving States
 	'Receiving': 'receiving',
+	'receiving': 'receiving',
 	'Received': 'delivered', // For received faxes
+	'received': 'delivered',
 	
 	// Failure States
 	'Failed': 'failed',
+	'failed': 'failed',
 	'Failed - Busy': 'busy',
+	'failed - busy': 'busy',
 	'Failed - No Answer': 'no-answer',
+	'failed - no answer': 'no-answer',
 	'Failed - Check number and try again': 'failed',
+	'failed - check number and try again': 'failed',
 	'Failed - Connection not a Fax Machine': 'failed',
+	'failed - connection not a fax machine': 'failed',
 	
 	// Cancellation
 	'Cancelled': 'cancelled',
+	'cancelled': 'cancelled',
 	
 	// Additional status codes that may appear in webhooks
 	'Retry': 'retrying',
+	'retry': 'retrying',
 	'Completed': 'delivered',
+	'completed': 'delivered',
 	'Error': 'failed',
+	'error': 'failed',
 	'Timeout': 'failed',
+	'timeout': 'failed',
 	'Rejected': 'failed',
-	'Aborted': 'cancelled'
+	'rejected': 'failed',
+	'Aborted': 'cancelled',
+	'aborted': 'cancelled'
 };
+
+/**
+ * Safely map Notifyre status to internal status with fallback
+ * @param {string} notifyreStatus - Status from Notifyre API
+ * @param {Logger} logger - Logger instance
+ * @returns {string} Mapped internal status
+ */
+export function mapNotifyreStatus(notifyreStatus, logger) {
+	if (!notifyreStatus) {
+		logger.log('WARN', 'Empty status received from Notifyre API');
+		return 'failed';
+	}
+
+	const mappedStatus = NOTIFYRE_STATUS_MAP[notifyreStatus];
+	
+	if (!mappedStatus) {
+		logger.log('WARN', 'Unknown status from Notifyre API', {
+			notifyreStatus,
+			availableMappings: Object.keys(NOTIFYRE_STATUS_MAP)
+		});
+		// Default to 'failed' for unknown statuses to avoid database enum errors
+		return 'failed';
+	}
+
+	logger.log('DEBUG', 'Mapped Notifyre status', {
+		notifyreStatus,
+		mappedStatus
+	});
+
+	return mappedStatus;
+}
 
 /**
  * Database utilities for cron jobs
@@ -240,8 +311,7 @@ export class DatabaseUtils {
 					updated_at: new Date().toISOString()
 				})
 				.eq('notifyre_fax_id', faxId)
-				.select()
-				.single();
+				.select();
 
 			if (error) {
 				logger.log('ERROR', 'Failed to update fax record', {
@@ -251,12 +321,22 @@ export class DatabaseUtils {
 				return null;
 			}
 
+			// Check if any records were found and updated
+			if (!data || data.length === 0) {
+				logger.log('WARN', 'Fax record not found in database, skipping update', {
+					faxId,
+					message: 'This fax may not have been sent through our system'
+				});
+				return null;
+			}
+
 			logger.log('DEBUG', 'Successfully updated fax record', {
 				faxId,
-				recordId: data?.id
+				recordId: data[0]?.id,
+				recordsUpdated: data.length
 			});
 
-			return data;
+			return data[0];
 		} catch (error) {
 			logger.log('ERROR', 'Error updating fax record', {
 				faxId,

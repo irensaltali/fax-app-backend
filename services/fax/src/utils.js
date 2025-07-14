@@ -357,34 +357,86 @@ export class WebhookUtils {
 export const NOTIFYRE_STATUS_MAP = {
 	// Initial/Processing States
 	'Preparing': 'queued',
+	'preparing': 'queued',
 	'Queued': 'queued',
+	'queued': 'queued',
 	'In Progress': 'processing',
+	'in progress': 'processing',
 	'Processing': 'processing',
+	'processing': 'processing',
 	'Sending': 'sending',
+	'sending': 'sending',
 	
 	// Success States
 	'Successful': 'delivered',
+	'successful': 'delivered',
 	'Delivered': 'delivered',
+	'delivered': 'delivered',
 	'Sent': 'delivered', // Additional mapping for fax.sent events
+	'sent': 'delivered',
 	
 	// Receiving States
 	'Receiving': 'receiving',
+	'receiving': 'receiving',
 	'Received': 'delivered', // For received faxes
+	'received': 'delivered',
 	
 	// Failure States
 	'Failed': 'failed',
+	'failed': 'failed',
 	'Failed - Busy': 'busy',
+	'failed - busy': 'busy',
 	'Failed - No Answer': 'no-answer',
+	'failed - no answer': 'no-answer',
 	'Failed - Check number and try again': 'failed',
+	'failed - check number and try again': 'failed',
 	'Failed - Connection not a Fax Machine': 'failed',
+	'failed - connection not a fax machine': 'failed',
 	
 	// Cancellation
 	'Cancelled': 'cancelled',
+	'cancelled': 'cancelled',
 	
 	// Additional status codes that may appear in webhooks
 	'Completed': 'delivered',
+	'completed': 'delivered',
 	'Error': 'failed',
+	'error': 'failed',
 	'Timeout': 'failed',
+	'timeout': 'failed',
 	'Rejected': 'failed',
-	'Aborted': 'cancelled'
-}; 
+	'rejected': 'failed',
+	'Aborted': 'cancelled',
+	'aborted': 'cancelled'
+};
+
+/**
+ * Safely map Notifyre status to internal status with fallback
+ * @param {string} notifyreStatus - Status from Notifyre API
+ * @param {Logger} logger - Logger instance
+ * @returns {string} Mapped internal status
+ */
+export function mapNotifyreStatus(notifyreStatus, logger) {
+	if (!notifyreStatus) {
+		logger.log('WARN', 'Empty status received from Notifyre API');
+		return 'failed';
+	}
+
+	const mappedStatus = NOTIFYRE_STATUS_MAP[notifyreStatus];
+	
+	if (!mappedStatus) {
+		logger.log('WARN', 'Unknown status from Notifyre API', {
+			notifyreStatus,
+			availableMappings: Object.keys(NOTIFYRE_STATUS_MAP)
+		});
+		// Default to 'failed' for unknown statuses to avoid database enum errors
+		return 'failed';
+	}
+
+	logger.log('DEBUG', 'Mapped Notifyre status', {
+		notifyreStatus,
+		mappedStatus
+	});
+
+	return mappedStatus;
+} 

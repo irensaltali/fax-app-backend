@@ -507,41 +507,62 @@ describe('Utils Module', () => {
 			expect(NOTIFYRE_STATUS_MAP).toEqual({
 				// Initial/Processing States
 				'Preparing': 'queued',
+				'preparing': 'queued',
 				'Queued': 'queued',
+				'queued': 'queued',
 				'In Progress': 'processing',
+				'in progress': 'processing',
 				'Processing': 'processing',
+				'processing': 'processing',
 				'Sending': 'sending',
+				'sending': 'sending',
 				
 				// Success States
 				'Successful': 'delivered',
+				'successful': 'delivered',
 				'Delivered': 'delivered',
+				'delivered': 'delivered',
 				'Sent': 'delivered', // Additional mapping for fax.sent events
+				'sent': 'delivered',
 				
 				// Receiving States
 				'Receiving': 'receiving',
+				'receiving': 'receiving',
 				'Received': 'delivered', // For received faxes
+				'received': 'delivered',
 				
 				// Failure States
 				'Failed': 'failed',
+				'failed': 'failed',
 				'Failed - Busy': 'busy',
+				'failed - busy': 'busy',
 				'Failed - No Answer': 'no-answer',
+				'failed - no answer': 'no-answer',
 				'Failed - Check number and try again': 'failed',
+				'failed - check number and try again': 'failed',
 				'Failed - Connection not a Fax Machine': 'failed',
+				'failed - connection not a fax machine': 'failed',
 				
 				// Cancellation
 				'Cancelled': 'cancelled',
+				'cancelled': 'cancelled',
 				
 				// Additional status codes that may appear in webhooks
 				'Completed': 'delivered',
+				'completed': 'delivered',
 				'Error': 'failed',
+				'error': 'failed',
 				'Timeout': 'failed',
+				'timeout': 'failed',
 				'Rejected': 'failed',
-				'Aborted': 'cancelled'
+				'rejected': 'failed',
+				'Aborted': 'cancelled',
+				'aborted': 'cancelled'
 			});
 		});
 
 		it('should map all expected Notifyre statuses', () => {
-			// Test some key mappings
+			// Test some key mappings (capitalized)
 			expect(NOTIFYRE_STATUS_MAP['Successful']).toBe('delivered');
 			expect(NOTIFYRE_STATUS_MAP['Sent']).toBe('delivered');
 			expect(NOTIFYRE_STATUS_MAP['Failed - Busy']).toBe('busy');
@@ -549,13 +570,27 @@ describe('Utils Module', () => {
 			expect(NOTIFYRE_STATUS_MAP['Preparing']).toBe('queued');
 			expect(NOTIFYRE_STATUS_MAP['Cancelled']).toBe('cancelled');
 			
+			// Test lowercase variants
+			expect(NOTIFYRE_STATUS_MAP['successful']).toBe('delivered');
+			expect(NOTIFYRE_STATUS_MAP['sent']).toBe('delivered');
+			expect(NOTIFYRE_STATUS_MAP['failed - busy']).toBe('busy');
+			expect(NOTIFYRE_STATUS_MAP['failed - no answer']).toBe('no-answer');
+			expect(NOTIFYRE_STATUS_MAP['preparing']).toBe('queued');
+			expect(NOTIFYRE_STATUS_MAP['cancelled']).toBe('cancelled');
+			
 			// Test new mappings
 			expect(NOTIFYRE_STATUS_MAP['Completed']).toBe('delivered');
+			expect(NOTIFYRE_STATUS_MAP['completed']).toBe('delivered');
 			expect(NOTIFYRE_STATUS_MAP['Error']).toBe('failed');
+			expect(NOTIFYRE_STATUS_MAP['error']).toBe('failed');
 			expect(NOTIFYRE_STATUS_MAP['Timeout']).toBe('failed');
+			expect(NOTIFYRE_STATUS_MAP['timeout']).toBe('failed');
 			expect(NOTIFYRE_STATUS_MAP['Rejected']).toBe('failed');
+			expect(NOTIFYRE_STATUS_MAP['rejected']).toBe('failed');
 			expect(NOTIFYRE_STATUS_MAP['Aborted']).toBe('cancelled');
+			expect(NOTIFYRE_STATUS_MAP['aborted']).toBe('cancelled');
 			expect(NOTIFYRE_STATUS_MAP['Received']).toBe('delivered');
+			expect(NOTIFYRE_STATUS_MAP['received']).toBe('delivered');
 		});
 	});
 }); 

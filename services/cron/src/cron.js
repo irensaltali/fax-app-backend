@@ -3,7 +3,7 @@
  * Handles scheduled tasks for fax status polling, cleanup, and maintenance
  */
 
-import { Logger, NotifyreApiUtils, NOTIFYRE_STATUS_MAP, DatabaseUtils } from './utils.js';
+import { Logger, NotifyreApiUtils, NOTIFYRE_STATUS_MAP, DatabaseUtils, mapNotifyreStatus } from './utils.js';
 
 export default {
 	/**
@@ -146,8 +146,8 @@ async function handleFaxStatusPolling(env, logger) {
 		// Process each fax from Notifyre
 		for (const faxDetails of faxesFromNotifyre) {
 			try {
-				// Map status and prepare update data
-				const mappedStatus = NOTIFYRE_STATUS_MAP[faxDetails.status] || 'unknown';
+							// Map status and prepare update data
+			const mappedStatus = mapNotifyreStatus(faxDetails.status, logger);
 				
 				const updateData = {
 					status: mappedStatus,

@@ -9,7 +9,8 @@ import {
 	Logger,
 	FileUtils,
 	NotifyreApiUtils,
-	NOTIFYRE_STATUS_MAP
+	NOTIFYRE_STATUS_MAP,
+	mapNotifyreStatus
 } from './utils.js';
 import { DatabaseUtils } from './database.js';
 
@@ -535,7 +536,7 @@ export default class extends WorkerEntrypoint {
 
 			const statusResult = {
 				id: faxDetails.id,
-				status: NOTIFYRE_STATUS_MAP[faxDetails.status] || 'unknown',
+				status: mapNotifyreStatus(faxDetails.status, this.logger),
 				originalStatus: faxDetails.status,
 				message: "Fax status retrieved",
 				timestamp: new Date().toISOString(),
