@@ -176,123 +176,64 @@ export class FileUtils {
 }
 
 /**
- * Notifyre API utilities
+ * Generic API utilities (provider-agnostic)
  */
-export class NotifyreApiUtils {
+export class ApiUtils {
 	/**
-	 * Get Notifyre API headers
-	 * @param {string} apiKey - Notifyre API key
-	 * @returns {object} Headers for API requests
+	 * Safely sanitize request data for logging
+	 * @param {object} data - Request data to sanitize
+	 * @returns {object} Sanitized data safe for logging
 	 */
-	static getHeaders(apiKey) {
-		return {
-			'x-api-token': apiKey,
-			'Content-Type': 'application/json',
-			'Accept': 'application/json',
-			'User-Agent': 'Notifyre-Fax-Service/2.0.0'
-		};
+	static sanitizeForLogging(data) {
+		if (!data || typeof data !== 'object') {
+			return data;
+		}
+
+		try {
+			const sanitized = JSON.parse(JSON.stringify(data));
+			
+			// Sanitize file data in various provider formats
+			if (sanitized.Faxes?.Documents) {
+				sanitized.Faxes.Documents = sanitized.Faxes.Documents.map((doc, index) => ({
+					Filename: doc.Filename,
+					Data: doc.Data ? `[BASE64_DATA_${doc.Data.length}_CHARS]` : null
+				}));
+			}
+
+			// Sanitize API keys in headers
+			if (sanitized.headers) {
+				Object.keys(sanitized.headers).forEach(key => {
+					if (key.toLowerCase().includes('key') || key.toLowerCase().includes('token') || key.toLowerCase().includes('authorization')) {
+						sanitized.headers[key] = '[REDACTED]';
+					}
+				});
+			}
+
+			return sanitized;
+		} catch (error) {
+			return '[LOGGING_SANITIZATION_ERROR]';
+		}
 	}
 
 	/**
-	 * Make API request to Notifyre
-	 * @param {string} endpoint - API endpoint
-	 * @param {string} method - HTTP method
-	 * @param {object} data - Request data
-	 * @param {string} apiKey - API key
+	 * Validate common API response structure
+	 * @param {object} response - API response
+	 * @param {string} provider - Provider name for logging
 	 * @param {Logger} logger - Logger instance
-	 * @returns {object} API response
+	 * @returns {boolean} True if response is valid
 	 */
-	static async makeRequest(endpoint, method = 'GET', data = null, apiKey, logger) {
-		const NOTIFYRE_API_BASE_URL = 'https://api.notifyre.com';
-		const url = `${NOTIFYRE_API_BASE_URL}${endpoint}`;
-		const options = {
-			method,
-			headers: this.getHeaders(apiKey)
-		};
-
-		if (data && (method === 'POST' || method === 'PUT' || method === 'PATCH')) {
-			if (data instanceof FormData) {
-				// Remove Content-Type header for FormData to let browser set it with boundary
-				delete options.headers['Content-Type'];
-				options.body = data;
-			} else {
-				// Ensure Content-Type is application/json for JSON payloads
-				options.headers['Content-Type'] = 'application/json';
-				try {
-					options.body = JSON.stringify(data);
-				} catch (stringifyError) {
-					logger.log('ERROR', 'Failed to stringify request data', { error: stringifyError.message });
-					throw new Error('Request data serialization failed');
-				}
-			}
+	static validateApiResponse(response, provider, logger) {
+		if (!response) {
+			logger.log('ERROR', `Empty response from ${provider} API`);
+			return false;
 		}
 
-		// Log request details with full body (sanitized for sensitive data)
-		let requestBodyLog = null;
-		if (options.body) {
-			if (data instanceof FormData) {
-				requestBodyLog = 'FormData object (not logged due to binary content)';
-			} else if (typeof data === 'object' && data !== null) {
-				// Create a deep copy and sanitize sensitive data
-				const sanitizedData = JSON.parse(JSON.stringify(data));
-				if (sanitizedData.Faxes?.Documents) {
-					sanitizedData.Faxes.Documents = sanitizedData.Faxes.Documents.map((doc, index) => ({
-						Filename: doc.Filename,
-						Data: doc.Data ? `[BASE64_DATA_${doc.Data.length}_CHARS]` : null
-					}));
-				}
-				requestBodyLog = sanitizedData;
-			} else {
-				requestBodyLog = options.body;
-			}
+		if (typeof response !== 'object') {
+			logger.log('ERROR', `Invalid response type from ${provider} API`, { type: typeof response });
+			return false;
 		}
 
-		logger.log('DEBUG', 'Making Notifyre API request', { 
-			url, 
-			method, 
-			hasData: !!data,
-			hasApiKey: !!apiKey,
-			apiKeyPrefix: apiKey && typeof apiKey === 'string' ? apiKey.substring(0, 8) + '...' : 'none',
-			headers: {
-				'x-api-token': apiKey && typeof apiKey === 'string' ? apiKey.substring(0, 8) + '...' : 'none',
-				'Content-Type': options.headers['Content-Type'],
-				'User-Agent': options.headers['User-Agent']
-			},
-			requestBody: requestBodyLog
-		});
-
-		try {
-			const response = await fetch(url, options);
-			const responseData = await response.json();
-
-			// Log full response body
-			logger.log('DEBUG', 'Notifyre API response received', {
-				url,
-				status: response.status,
-				statusText: response.statusText,
-				ok: response.ok,
-				headers: {
-					'content-type': response.headers?.get ? response.headers.get('content-type') : 'unknown',
-					'content-length': response.headers?.get ? response.headers.get('content-length') : 'unknown'
-				},
-				responseBody: responseData
-			});
-
-			if (!response.ok) {
-				logger.log('ERROR', 'Notifyre API error', {
-					url,
-					status: response.status,
-					statusText: response.statusText,
-					response: responseData
-				});
-				throw new Error(`Notifyre API error: ${response.status} ${response.statusText} - URL: ${url}`);
-			}
-
-			return responseData;
-		} catch (error) {
-			logger.log('ERROR', 'Notifyre API request failed', { url, error: error.message });
-			throw error;
-		}
+		return true;
 	}
 }
 
@@ -352,91 +293,55 @@ export class WebhookUtils {
 
 
 /**
- * Constants and mappings
+ * Common status constants
  */
-export const NOTIFYRE_STATUS_MAP = {
-	// Initial/Processing States
-	'Preparing': 'queued',
-	'preparing': 'queued',
-	'Queued': 'queued',
-	'queued': 'queued',
-	'In Progress': 'processing',
-	'in progress': 'processing',
-	'Processing': 'processing',
-	'processing': 'processing',
-	'Sending': 'sending',
-	'sending': 'sending',
-	
-	// Success States
-	'Successful': 'delivered',
-	'successful': 'delivered',
-	'Delivered': 'delivered',
-	'delivered': 'delivered',
-	'Sent': 'delivered', // Additional mapping for fax.sent events
-	'sent': 'delivered',
-	
-	// Receiving States
-	'Receiving': 'receiving',
-	'receiving': 'receiving',
-	'Received': 'delivered', // For received faxes
-	'received': 'delivered',
-	
-	// Failure States
-	'Failed': 'failed',
-	'failed': 'failed',
-	'Failed - Busy': 'busy',
-	'failed - busy': 'busy',
-	'Failed - No Answer': 'no-answer',
-	'failed - no answer': 'no-answer',
-	'Failed - Check number and try again': 'failed',
-	'failed - check number and try again': 'failed',
-	'Failed - Connection not a Fax Machine': 'failed',
-	'failed - connection not a fax machine': 'failed',
-	
-	// Cancellation
-	'Cancelled': 'cancelled',
-	'cancelled': 'cancelled',
-	
-	// Additional status codes that may appear in webhooks
-	'Completed': 'delivered',
-	'completed': 'delivered',
-	'Error': 'failed',
-	'error': 'failed',
-	'Timeout': 'failed',
-	'timeout': 'failed',
-	'Rejected': 'failed',
-	'rejected': 'failed',
-	'Aborted': 'cancelled',
-	'aborted': 'cancelled'
-};
+export const STANDARD_FAX_STATUSES = [
+	'queued',
+	'processing', 
+	'sending',
+	'delivered',
+	'receiving',
+	'failed',
+	'busy',
+	'no-answer',
+	'cancelled'
+];
 
 /**
- * Safely map Notifyre status to internal status with fallback
- * @param {string} notifyreStatus - Status from Notifyre API
- * @param {Logger} logger - Logger instance
- * @returns {string} Mapped internal status
+ * Validate if a status is a valid standard fax status
+ * @param {string} status - Status to validate
+ * @returns {boolean} True if status is valid
  */
-export function mapNotifyreStatus(notifyreStatus, logger) {
-	if (!notifyreStatus) {
-		logger.log('WARN', 'Empty status received from Notifyre API');
-		return 'failed';
+export function isValidFaxStatus(status) {
+	return STANDARD_FAX_STATUSES.includes(status);
+}
+
+/**
+ * Re-exports for backward compatibility with existing tests
+ */
+
+// Import NotifyreProvider for re-exports
+import { NotifyreProvider } from './providers/notifyre-provider.js';
+
+// Create a temporary provider instance to get the status map
+const tempProvider = new NotifyreProvider('temp', { log: () => {} });
+
+/**
+ * Legacy NotifyreApiUtils class for test compatibility
+ */
+export class NotifyreApiUtils {
+	static getHeaders(apiKey) {
+		const provider = new NotifyreProvider(apiKey, { log: () => {} });
+		return provider.getHeaders();
 	}
 
-	const mappedStatus = NOTIFYRE_STATUS_MAP[notifyreStatus];
-	
-	if (!mappedStatus) {
-		logger.log('WARN', 'Unknown status from Notifyre API', {
-			notifyreStatus,
-			availableMappings: Object.keys(NOTIFYRE_STATUS_MAP)
-		});
-		// Default to 'failed' for unknown statuses to avoid database enum errors
-		return 'failed';
+	static async makeRequest(endpoint, method = 'GET', data = null, apiKey, logger) {
+		const provider = new NotifyreProvider(apiKey, logger || { log: () => {} });
+		return await provider.makeRequest(endpoint, method, data);
 	}
+}
 
-	logger.log('DEBUG', 'Mapped Notifyre status', {
-		notifyreStatus,
-		mappedStatus
-	});
-
-	return mappedStatus;
-} 
+/**
+ * Legacy status map export for test compatibility
+ */
+export const NOTIFYRE_STATUS_MAP = tempProvider.getStatusMap();

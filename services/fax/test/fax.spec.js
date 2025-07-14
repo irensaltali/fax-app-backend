@@ -276,17 +276,29 @@ describe('Fax Service', () => {
 		});
 
 		it('should handle Notifyre API response without valid ID', async () => {
-			// Mock Notifyre API to return response without ID
-			const originalMakeRequest = NotifyreApiUtils.makeRequest;
-			NotifyreApiUtils.makeRequest = vi.fn().mockResolvedValue({
-				payload: {
-					// Missing 'faxID' field
-					friendlyID: 'TEST123'
-				},
-				success: true,
-				statusCode: 200,
-				message: "OK",
-				errors: []
+			// Store original fetch mock
+			const originalFetch = global.fetch;
+			
+			// Mock fetch to return response without faxID
+			global.fetch = vi.fn().mockImplementation((url, options) => {
+				const urlObj = new URL(url);
+				if (urlObj.pathname === '/fax/send') {
+					return Promise.resolve({
+						ok: true,
+						json: () => Promise.resolve({
+							payload: {
+								// Missing 'faxID' field
+								friendlyID: 'TEST123'
+							},
+							success: true,
+							statusCode: 200,
+							message: "OK",
+							errors: []
+						})
+					});
+				}
+				// For other paths, use the original mock
+				return originalFetch(url, options);
 			});
 
 			const request = new Request('https://api.sendfax.pro/v1/fax/send', {
@@ -304,8 +316,8 @@ describe('Fax Service', () => {
 			expect(result.error).toBe('Fax sending failed');
 			expect(result.message).toBe('Notifyre API did not return a valid fax ID');
 
-			// Restore original mock
-			NotifyreApiUtils.makeRequest = originalMakeRequest;
+			// Restore original fetch mock
+			global.fetch = originalFetch;
 		});
 	});
 

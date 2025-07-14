@@ -1,18 +1,13 @@
 /**
  * Fax Service - Compatible with Serverless API Gateway
  * Service binding handlers that receive (request, caller_env, sagContext) parameters
- * Full Notifyre API Integration
+ * Currently using Notifyre API with multi-provider architecture support
  */
 
 import { WorkerEntrypoint } from "cloudflare:workers";
-import {
-	Logger,
-	FileUtils,
-	NotifyreApiUtils,
-	NOTIFYRE_STATUS_MAP,
-	mapNotifyreStatus
-} from './utils.js';
+import { Logger, FileUtils, ApiUtils, isValidFaxStatus } from './utils.js';
 import { DatabaseUtils } from './database.js';
+import { ProviderFactory } from './providers/provider-factory.js';
 
 export default class extends WorkerEntrypoint {
 	constructor(ctx, env) {
@@ -221,114 +216,38 @@ export default class extends WorkerEntrypoint {
 	}
 
 	/**
-	 * Build Notifyre API payload structure
-	 * @param {object} faxRequest - Prepared fax request
-	 * @returns {object} Notifyre API payload
+	 * Create and configure Notifyre fax API client
+	 * @param {object} env - Environment variables
+	 * @returns {NotifyreProvider} Configured Notifyre provider instance
 	 */
-	async buildNotifyrePayload(faxRequest) {
-		this.logger.log('DEBUG', 'Building Notifyre API payload structure');
+	async createFaxProvider(env) {
+		// Get API provider name from environment, default to 'notifyre'
+		const apiProviderName = env.FAX_PROVIDER || 'notifyre';
+		
+		// Get the appropriate API key based on the selected provider
+		let apiKey;
+		switch (apiProviderName.toLowerCase()) {
+			case 'notifyre':
+				apiKey = env.NOTIFYRE_API_KEY;
+				break;
+			// Add other API providers here as they're implemented
+			// case 'twilio':
+			//     apiKey = env.TWILIO_AUTH_TOKEN;
+			//     break;
+			default:
+				throw new Error(`Unsupported API provider: ${apiProviderName}`);
+		}
 
-		const notifyrePayload = {
-			Faxes: {
-				Recipients: [],
-				SendFrom: faxRequest.senderId || "",
-				ClientReference: faxRequest.clientReference || "SendFaxPro",
-				Subject: faxRequest.subject || faxRequest.message || "Fax Document",
-				IsHighQuality: faxRequest.isHighQuality || false,
-				CoverPage: false,
-				Documents: []
-			}
-		};
+		if (!apiKey) {
+			throw new Error(`API key not found for ${apiProviderName} provider`);
+		}
 
-		this.logger.log('DEBUG', 'Base payload structure created', {
-			sendFrom: notifyrePayload.Faxes.SendFrom,
-			clientReference: notifyrePayload.Faxes.ClientReference,
-			subject: notifyrePayload.Faxes.Subject,
-			isHighQuality: notifyrePayload.Faxes.IsHighQuality,
-			coverPage: notifyrePayload.Faxes.CoverPage
+		this.logger.log('DEBUG', 'Creating Notifyre API client', { 
+			apiProvider: apiProviderName,
+			hasApiKey: !!apiKey 
 		});
 
-		// Always add TestCoverPage template to every fax request
-		notifyrePayload.TemplateName = "TestCoverPage";
-		this.logger.log('DEBUG', 'Added default cover page template to payload', { templateName: "TestCoverPage" });
-
-		// Override with custom template if cover page is specified
-		if (faxRequest.coverPage) {
-			notifyrePayload.TemplateName = faxRequest.coverPage;
-			this.logger.log('DEBUG', 'Overrode with custom cover page template', { templateName: faxRequest.coverPage });
-		}
-
-		// Convert recipients to Notifyre format
-		if (faxRequest.recipients && Array.isArray(faxRequest.recipients)) {
-			faxRequest.recipients.forEach((recipient, index) => {
-				notifyrePayload.Faxes.Recipients.push({
-					Type: "fax_number",
-					Value: recipient
-				});
-				this.logger.log('DEBUG', `Added recipient ${index}`, {
-					type: "fax_number",
-					value: recipient.replace(/\d/g, '*')
-				});
-			});
-		}
-
-		// Convert files to Notifyre format
-		if (faxRequest.files && Array.isArray(faxRequest.files)) {
-			this.logger.log('DEBUG', 'Processing files for conversion', { fileCount: faxRequest.files.length });
-
-			for (let i = 0; i < faxRequest.files.length; i++) {
-				const file = faxRequest.files[i];
-				let filename = `document_${i + 1}.pdf`;
-
-				try {
-					if (file instanceof Blob || file instanceof File) {
-						// Check file size limit (100MB)
-						if (file.size > 100 * 1024 * 1024) {
-							this.logger.log('WARN', 'File size exceeds limit', { size: file.size, filename: file.name });
-							continue;
-						}
-
-						// Convert file to base64 safely
-						const arrayBuffer = await file.arrayBuffer();
-						const uint8Array = new Uint8Array(arrayBuffer);
-						const fileData = FileUtils.arrayBufferToBase64(uint8Array);
-						filename = file.name || filename;
-
-						notifyrePayload.Faxes.Documents.push({
-							Filename: filename,
-							Data: fileData
-						});
-
-						this.logger.log('DEBUG', 'Added document to payload', { filename });
-					} else if (file.data) {
-						// Already base64 data
-						notifyrePayload.Faxes.Documents.push({
-							Filename: file.filename || file.name || filename,
-							Data: file.data
-						});
-
-						this.logger.log('DEBUG', 'Added base64 document to payload', { filename });
-					}
-				} catch (fileError) {
-					this.logger.log('ERROR', 'Error processing file', {
-						fileIndex: i,
-						filename: filename,
-						error: fileError.message
-					});
-				}
-			}
-		}
-
-		this.logger.log('DEBUG', 'Prepared Notifyre payload structure', {
-			recipientCount: notifyrePayload.Faxes.Recipients.length,
-			documentCount: notifyrePayload.Faxes.Documents.length,
-			subject: notifyrePayload.Faxes.Subject,
-			hasTemplate: !!notifyrePayload.TemplateName,
-			clientReference: notifyrePayload.Faxes.ClientReference,
-			coverPage: notifyrePayload.Faxes.CoverPage
-		});
-
-		return notifyrePayload;
+		return ProviderFactory.createProvider(apiProviderName, apiKey, this.logger);
 	}
 
 
@@ -355,65 +274,44 @@ export default class extends WorkerEntrypoint {
 				authorization: request.headers.get('authorization') ? 'Bearer [REDACTED]' : 'none'
 			});
 
-			// Validate API key from Secrets Store
-			const apiKey = await this.env.NOTIFYRE_API_KEY;
-			if (!apiKey) {
-				this.logger.log('ERROR', 'NOTIFYRE_API_KEY not configured in secrets store or environment');
-				throw new Error('Service configuration error');
-			}
+			// Step 1: Create and validate Notifyre API client
+			const notifyreClient = await this.createFaxProvider(this.env);
 
-			// Step 1: Parse request body  
+			// Step 2: Parse request body  
 			const requestBody = await this.parseRequestBody(request);
 
-			// Step 2: Prepare fax request from parsed body
+			// Step 3: Prepare fax request from parsed body
 			const faxRequest = await this.prepareFaxRequest(requestBody);
 
-			// Step 3: Build Notifyre API payload
-			const notifyrePayload = await this.buildNotifyrePayload(faxRequest);
+			// Step 4: Build Notifyre API payload
+			const notifyrePayload = await notifyreClient.buildPayload(faxRequest);
 
-			// Step 4: Submit to Notifyre API
-			this.logger.log('INFO', 'Sending request to Notifyre API', {
-				endpoint: '/fax/send',
-				method: 'POST',
+			// Step 5: Submit via Notifyre API
+			this.logger.log('INFO', 'Sending fax via Notifyre API', {
+				apiProvider: notifyreClient.getProviderName(),
 				hasPayload: !!notifyrePayload,
-				recipientCount: notifyrePayload.Faxes.Recipients.length,
-				documentCount: notifyrePayload.Faxes.Documents.length,
-				hasTemplate: !!notifyrePayload.TemplateName
+				recipientCount: faxRequest.recipients ? faxRequest.recipients.length : 0,
+				fileCount: faxRequest.files ? faxRequest.files.length : 0
 			});
 
-			const faxResult = await NotifyreApiUtils.makeRequest('/fax/send', 'POST', notifyrePayload, apiKey, this.logger);
+			const notifyreResult = await notifyreClient.sendFax(notifyrePayload);
 
-			// Extract fax ID from the actual API response structure
-			const faxId = faxResult?.payload?.faxID || faxResult?.id;
-			const friendlyId = faxResult?.payload?.friendlyID;
-
-			// Log the API response
-			this.logger.log('INFO', 'Received response from Notifyre API', {
-				faxId: faxId,
-				friendlyId: friendlyId,
-				success: faxResult?.success,
-				statusCode: faxResult?.statusCode,
-				message: faxResult?.message,
-				hasErrors: faxResult?.errors?.length > 0,
-				responseKeys: Object.keys(faxResult || {}),
-				fullResponse: faxResult
-			});
-
-			// Validate fax result has required ID
-			if (!faxId) {
-				this.logger.log('ERROR', 'Notifyre API response missing fax ID', {
-					faxResult: faxResult,
-					hasId: !!faxId,
-					hasPayload: !!faxResult?.payload,
-					payloadKeys: faxResult?.payload ? Object.keys(faxResult.payload) : [],
-					responseKeys: Object.keys(faxResult || {})
+			// Validate Notifyre result has required ID
+			if (!notifyreResult.id) {
+				this.logger.log('ERROR', 'Notifyre API did not return a valid fax ID', {
+					apiProvider: notifyreClient.getProviderName(),
+					result: notifyreResult
 				});
 				throw new Error('Notifyre API did not return a valid fax ID');
 			}
 
-			this.logger.log('INFO', 'Fax submitted successfully', { faxId: faxId, friendlyId: friendlyId });
+			this.logger.log('INFO', 'Fax submitted successfully via Notifyre', { 
+				faxId: notifyreResult.id, 
+				friendlyId: notifyreResult.friendlyId,
+				apiProvider: notifyreClient.getProviderName()
+			});
 
-			// Step 5: Save fax record to database
+			// Step 6: Save fax record to database
 			let savedFaxRecord = null;
 			const userId = context.jwtPayload?.sub || context.jwtPayload?.user_id || context.user?.id || null;
 			const isAnonymous = !userId;
@@ -425,9 +323,9 @@ export default class extends WorkerEntrypoint {
 
 			// Prepare fax data for database save (for both authenticated and anonymous users)
 			const faxDataForSave = {
-				id: faxId,
-				status: 'queued', // Fax is queued for processing after successful submission
-				originalStatus: 'Submitted',
+				id: notifyreResult.id,
+				status: notifyreResult.status || 'queued',
+				originalStatus: notifyreResult.originalStatus || 'Submitted',
 				recipients: faxRequest.recipients || [],
 				senderId: faxRequest.senderId,
 				subject: faxRequest.subject || faxRequest.message,
@@ -436,39 +334,42 @@ export default class extends WorkerEntrypoint {
 				clientReference: faxRequest.clientReference || 'SendFaxPro',
 				sentAt: new Date().toISOString(),
 				completedAt: null,
-				errorMessage: faxResult?.errors?.length > 0 ? faxResult.errors.join(', ') : null,
-				notifyreResponse: faxResult,
-				friendlyId: friendlyId
+				errorMessage: null,
+				notifyreResponse: notifyreResult.providerResponse,
+				friendlyId: notifyreResult.friendlyId,
+				apiProvider: notifyreClient.getProviderName()
 			};
 
 			// Save fax record for both authenticated and anonymous users
 			savedFaxRecord = await DatabaseUtils.saveFaxRecord(faxDataForSave, userId, this.env, this.logger);
 
-			// Step 6: Return success response
+			// Step 7: Return success response
 			const responseData = {
 				statusCode: 200,
 				message: "Fax submitted successfully",
 				data: {
-					id: faxId,
-					friendlyId: friendlyId,
-					status: 'queued',
-					originalStatus: 'Submitted',
+					id: notifyreResult.id,
+					friendlyId: notifyreResult.friendlyId,
+					status: notifyreResult.status || 'queued',
+					originalStatus: notifyreResult.originalStatus || 'Submitted',
 					message: "Fax is now queued for processing",
 					timestamp: new Date().toISOString(),
 					recipient: faxRequest.recipients?.[0] || 'unknown',
 					pages: 1,
 					cost: null,
-					notifyreResponse: faxResult
+					apiProvider: notifyreClient.getProviderName(),
+					notifyreResponse: notifyreResult.providerResponse
 				}
 			};
 
-			this.logger.log('INFO', 'Returning successful fax response', {
+			this.logger.log('INFO', 'Returning successful Notifyre fax response', {
 				faxId: responseData.data.id,
 				friendlyId: responseData.data.friendlyId,
 				status: responseData.data.status,
 				recipient: responseData.data.recipient ? responseData.data.recipient.replace(/\d/g, '*') : 'unknown',
 				pages: responseData.data.pages,
-				cost: responseData.data.cost
+				cost: responseData.data.cost,
+				apiProvider: responseData.data.apiProvider
 			});
 
 			return responseData;
@@ -485,9 +386,10 @@ export default class extends WorkerEntrypoint {
 			// Log additional context if available
 			if (this.env) {
 				this.logger.log('ERROR', 'Environment context during error', {
-					hasNotifyreApiKey: !!this.env.NOTIFYRE_API_KEY,
+					currentApiProvider: this.env.FAX_PROVIDER || 'notifyre',
+					hasNotifyreApiKey: !!(this.env.NOTIFYRE_API_KEY), // Add other API keys as needed
 					logLevel: this.env.LOG_LEVEL || 'not_set',
-					envKeys: Object.keys(this.env).filter(key => !key.includes('KEY') && !key.includes('SECRET'))
+					envKeys: Object.keys(this.env).filter(key => !key.includes('KEY') && !key.includes('SECRET') && !key.includes('TOKEN'))
 				});
 			}
 
@@ -502,7 +404,7 @@ export default class extends WorkerEntrypoint {
 	}
 
 	/**
-	 * Get fax status from Notifyre
+	 * Get fax status via Notifyre API
 	 * @param {Request} request - The incoming request
 	 * @param {string} caller_env - Stringified environment from caller
 	 * @param {string} sagContext - Stringified SAG context
@@ -515,11 +417,8 @@ export default class extends WorkerEntrypoint {
 
 			this.logger.log('INFO', 'Get fax status request received');
 
-			const apiKey = await this.env.NOTIFYRE_API_KEY;
-			if (!apiKey) {
-				this.logger.log('ERROR', 'NOTIFYRE_API_KEY not configured in secrets store or environment');
-				throw new Error('Service configuration error');
-			}
+			// Create Notifyre API client instance
+			const notifyreClient = await this.createFaxProvider(this.env);
 
 			const url = new URL(request.url);
 			const faxId = url.searchParams.get('id');
@@ -528,36 +427,36 @@ export default class extends WorkerEntrypoint {
 				throw new Error('Fax ID is required');
 			}
 
-			this.logger.log('INFO', 'Checking status for fax', { faxId });
+			this.logger.log('INFO', 'Checking fax status via Notifyre API', { 
+				faxId, 
+				apiProvider: notifyreClient.getProviderName() 
+			});
 
-			// Get fax details via Notifyre API
-			const faxDetails = await NotifyreApiUtils.makeRequest(`/fax/sent/${faxId}`, 'GET', null, apiKey, this.logger);
+			// Get fax status via Notifyre API
+			const notifyreStatusResult = await notifyreClient.getFaxStatus(faxId);
 
-			if (!faxDetails) {
-				throw new Error('Fax not found');
+			// Validate status is a known standard status
+			if (!isValidFaxStatus(notifyreStatusResult.status)) {
+				this.logger.log('WARN', 'Invalid status returned from Notifyre API', {
+					status: notifyreStatusResult.status,
+					apiProvider: notifyreClient.getProviderName()
+				});
+				// Don't throw error, just log warning
 			}
 
-			const statusResult = {
-				id: faxDetails.id,
-				status: mapNotifyreStatus(faxDetails.status, this.logger),
-				originalStatus: faxDetails.status,
-				message: "Fax status retrieved",
-				timestamp: new Date().toISOString(),
-				recipient: faxDetails.recipients?.[0] || 'unknown',
-				pages: faxDetails.pages || 0,
-				cost: faxDetails.cost || null,
-				sentAt: faxDetails.sentAt || null,
-				completedAt: faxDetails.completedAt || null,
-				errorMessage: faxDetails.errorMessage || null,
-				notifyreResponse: faxDetails
-			};
-
-			this.logger.log('INFO', 'Status retrieved successfully', { faxId, status: statusResult.status });
+			this.logger.log('INFO', 'Notifyre status retrieved successfully', { 
+				faxId, 
+				status: notifyreStatusResult.status,
+				apiProvider: notifyreClient.getProviderName()
+			});
 
 			return {
 				statusCode: 200,
 				message: "Status retrieved successfully",
-				data: statusResult
+				data: {
+					...notifyreStatusResult,
+					apiProvider: notifyreClient.getProviderName()
+				}
 			};
 
 		} catch (error) {
@@ -607,10 +506,13 @@ export default class extends WorkerEntrypoint {
 					service: "notifyre-fax",
 					timestamp: new Date().toISOString(),
 					version: "2.0.0",
+					currentApiProvider: this.env?.FAX_PROVIDER || 'notifyre',
+					supportedApiProviders: ['notifyre'], // Will expand as more providers are added
 					features: [
 						"send-fax",
 						"get-status",
-						"webhooks"
+						"webhooks",
+						"multi-api-provider-support"
 					]
 				}
 			};
@@ -655,10 +557,13 @@ export default class extends WorkerEntrypoint {
 					timestamp: new Date().toISOString(),
 					version: "2.0.0",
 					authenticated: true,
+					currentApiProvider: this.env?.FAX_PROVIDER || 'notifyre',
+					supportedApiProviders: ['notifyre'], // Will expand as more providers are added
 					features: [
 						"send-fax",
 						"get-status",
-						"polling"
+						"polling",
+						"multi-api-provider-support"
 					]
 				}
 			};

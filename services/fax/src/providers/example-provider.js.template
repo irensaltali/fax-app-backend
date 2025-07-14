@@ -1,0 +1,268 @@
+/**
+ * Example Provider Template
+ * Copy this file and rename to {provider-name}-provider.js
+ * Replace 'Example' with your actual provider name
+ */
+
+import { BaseFaxProvider } from './base-provider.js';
+import { FileUtils } from '../utils.js';
+
+export class ExampleProvider extends BaseFaxProvider {
+	constructor(apiKey, logger, options = {}) {
+		super(apiKey, logger);
+		
+		// Provider-specific configuration
+		this.baseUrl = options.baseUrl || 'https://api.example.com';
+		this.version = options.version || 'v1';
+		
+		// Additional provider-specific properties
+		// this.accountId = options.accountId;
+		// this.region = options.region || 'us-east-1';
+	}
+
+	getProviderName() {
+		return 'example'; // Return lowercase provider name
+	}
+
+	/**
+	 * Build provider-specific payload from standardized fax request
+	 * @param {object} faxRequest - Standardized fax request
+	 * @returns {object} Provider-specific payload
+	 */
+	async buildPayload(faxRequest) {
+		this.logger.log('DEBUG', 'Building Example API payload structure');
+
+		// Convert standardized format to provider-specific format
+		const examplePayload = {
+			// Example provider structure - customize for your provider
+			to: faxRequest.recipients || [],
+			from: faxRequest.senderId || "",
+			subject: faxRequest.subject || faxRequest.message || "Fax Document",
+			// quality: faxRequest.isHighQuality ? 'high' : 'standard',
+			// reference: faxRequest.clientReference || "SendFaxPro",
+			documents: []
+		};
+
+		// Convert files to provider format
+		if (faxRequest.files && Array.isArray(faxRequest.files)) {
+			for (let i = 0; i < faxRequest.files.length; i++) {
+				const file = faxRequest.files[i];
+				
+				try {
+					if (file instanceof Blob || file instanceof File) {
+						// Convert to base64 if needed
+						const arrayBuffer = await file.arrayBuffer();
+						const uint8Array = new Uint8Array(arrayBuffer);
+						const fileData = FileUtils.arrayBufferToBase64(uint8Array);
+						
+						examplePayload.documents.push({
+							name: file.name || `document_${i + 1}.pdf`,
+							content: fileData,
+							type: file.type || 'application/pdf'
+						});
+					} else if (file.data) {
+						// Already base64 data
+						examplePayload.documents.push({
+							name: file.filename || file.name || `document_${i + 1}.pdf`,
+							content: file.data,
+							type: file.mimeType || 'application/pdf'
+						});
+					}
+				} catch (error) {
+					this.logger.log('ERROR', 'Error processing file', {
+						fileIndex: i,
+						error: error.message
+					});
+				}
+			}
+		}
+
+		this.logger.log('DEBUG', 'Example payload prepared', {
+			recipientCount: examplePayload.to.length,
+			documentCount: examplePayload.documents.length
+		});
+
+		return examplePayload;
+	}
+
+	/**
+	 * Send fax via provider API
+	 * @param {object} payload - Provider-specific payload
+	 * @returns {object} Standardized response
+	 */
+	async sendFax(payload) {
+		this.logger.log('INFO', 'Sending fax via Example API');
+
+		const response = await this.makeRequest('/fax/send', 'POST', payload);
+
+		// Extract relevant information from provider response
+		// Customize this based on your provider's response format
+		const faxId = response.id || response.fax_id;
+		const friendlyId = response.friendly_id || response.reference;
+
+		if (!faxId) {
+			throw new Error('Example API did not return a valid fax ID');
+		}
+
+		// Return standardized response
+		return {
+			id: faxId,
+			friendlyId: friendlyId,
+			status: this.mapStatus(response.status || 'queued'),
+			originalStatus: response.status || 'submitted',
+			message: "Fax submitted successfully",
+			timestamp: new Date().toISOString(),
+			providerResponse: response
+		};
+	}
+
+	/**
+	 * Get fax status via provider API
+	 * @param {string} faxId - Fax ID
+	 * @returns {object} Standardized status response
+	 */
+	async getFaxStatus(faxId) {
+		this.logger.log('INFO', 'Getting fax status from Example API', { faxId });
+
+		const response = await this.makeRequest(`/fax/${faxId}`, 'GET');
+
+		if (!response) {
+			throw new Error('Fax not found');
+		}
+
+		return {
+			id: response.id,
+			status: this.mapStatus(response.status),
+			originalStatus: response.status,
+			message: "Fax status retrieved",
+			timestamp: new Date().toISOString(),
+			recipient: response.to || 'unknown',
+			pages: response.pages || 0,
+			cost: response.cost || null,
+			sentAt: response.sent_at || null,
+			completedAt: response.completed_at || null,
+			errorMessage: response.error_message || null,
+			providerResponse: response
+		};
+	}
+
+	/**
+	 * Map provider status to standardized status
+	 * @param {string} providerStatus - Status from provider
+	 * @returns {string} Standardized status
+	 */
+	mapStatus(providerStatus) {
+		if (!providerStatus) {
+			return 'failed';
+		}
+
+		// Define your provider's status mapping
+		const statusMap = {
+			// Example mappings - customize for your provider
+			'pending': 'queued',
+			'queued': 'queued',
+			'processing': 'processing',
+			'transmitting': 'sending',
+			'sent': 'delivered',
+			'delivered': 'delivered',
+			'completed': 'delivered',
+			'failed': 'failed',
+			'error': 'failed',
+			'busy': 'busy',
+			'no_answer': 'no-answer',
+			'cancelled': 'cancelled',
+			'timeout': 'failed'
+		};
+
+		const mappedStatus = statusMap[providerStatus.toLowerCase()];
+		
+		if (!mappedStatus) {
+			this.logger.log('WARN', 'Unknown status from Example API', {
+				providerStatus,
+				availableMappings: Object.keys(statusMap)
+			});
+			return 'failed';
+		}
+
+		return mappedStatus;
+	}
+
+	/**
+	 * Get provider-specific headers
+	 * @returns {object} Headers for API requests
+	 */
+	getHeaders() {
+		return {
+			// Customize headers for your provider
+			'Authorization': `Bearer ${this.apiKey}`, // or 'API-Key': this.apiKey
+			'Content-Type': 'application/json',
+			'Accept': 'application/json',
+			'User-Agent': 'SendFaxPro/2.0.0'
+		};
+	}
+
+	/**
+	 * Make API request to provider
+	 * @param {string} endpoint - API endpoint
+	 * @param {string} method - HTTP method
+	 * @param {object} data - Request data
+	 * @returns {object} API response
+	 */
+	async makeRequest(endpoint, method = 'GET', data = null) {
+		const url = `${this.baseUrl}/${this.version}${endpoint}`;
+		const options = {
+			method,
+			headers: this.getHeaders()
+		};
+
+		if (data && (method === 'POST' || method === 'PUT' || method === 'PATCH')) {
+			options.headers['Content-Type'] = 'application/json';
+			options.body = JSON.stringify(data);
+		}
+
+		this.logger.log('DEBUG', 'Making Example API request', {
+			url,
+			method,
+			hasData: !!data
+		});
+
+		try {
+			const response = await fetch(url, options);
+			const responseData = await response.json();
+
+			if (!response.ok) {
+				this.logger.log('ERROR', 'Example API error', {
+					status: response.status,
+					statusText: response.statusText,
+					response: responseData
+				});
+				throw new Error(`Example API error: ${response.status} ${response.statusText}`);
+			}
+
+			return responseData;
+		} catch (error) {
+			this.logger.log('ERROR', 'Example API request failed', {
+				url,
+				error: error.message
+			});
+			throw error;
+		}
+	}
+}
+
+/*
+ * TODO: To implement this provider:
+ * 
+ * 1. Rename this file to {provider}-provider.js
+ * 2. Replace 'Example' with your provider name throughout
+ * 3. Update baseUrl to your provider's API URL
+ * 4. Customize buildPayload() for your provider's API format
+ * 5. Update sendFax() to handle your provider's response format
+ * 6. Update getFaxStatus() for your provider's status endpoint
+ * 7. Update mapStatus() with your provider's status codes
+ * 8. Update getHeaders() with your provider's authentication
+ * 9. Test with your provider's sandbox environment
+ * 10. Add to provider-factory.js
+ * 11. Add environment variable handling to fax.js
+ * 12. Update documentation
+ */ 
