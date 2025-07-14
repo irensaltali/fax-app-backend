@@ -235,6 +235,7 @@ export default class extends WorkerEntrypoint {
 				ClientReference: faxRequest.clientReference || "SendFaxPro",
 				Subject: faxRequest.subject || faxRequest.message || "Fax Document",
 				IsHighQuality: faxRequest.isHighQuality || false,
+				CoverPage: false,
 				Documents: []
 			}
 		};
@@ -243,7 +244,8 @@ export default class extends WorkerEntrypoint {
 			sendFrom: notifyrePayload.Faxes.SendFrom,
 			clientReference: notifyrePayload.Faxes.ClientReference,
 			subject: notifyrePayload.Faxes.Subject,
-			isHighQuality: notifyrePayload.Faxes.IsHighQuality
+			isHighQuality: notifyrePayload.Faxes.IsHighQuality,
+			coverPage: notifyrePayload.Faxes.CoverPage
 		});
 
 		// Always add TestCoverPage template to every fax request
@@ -322,7 +324,8 @@ export default class extends WorkerEntrypoint {
 			documentCount: notifyrePayload.Faxes.Documents.length,
 			subject: notifyrePayload.Faxes.Subject,
 			hasTemplate: !!notifyrePayload.TemplateName,
-			clientReference: notifyrePayload.Faxes.ClientReference
+			clientReference: notifyrePayload.Faxes.ClientReference,
+			coverPage: notifyrePayload.Faxes.CoverPage
 		});
 
 		return notifyrePayload;
@@ -423,7 +426,7 @@ export default class extends WorkerEntrypoint {
 			// Prepare fax data for database save (for both authenticated and anonymous users)
 			const faxDataForSave = {
 				id: faxId,
-				status: 'processing', // Fax is in progress after successful submission
+				status: 'queued', // Fax is queued for processing after successful submission
 				originalStatus: 'Submitted',
 				recipients: faxRequest.recipients || [],
 				senderId: faxRequest.senderId,
@@ -448,9 +451,9 @@ export default class extends WorkerEntrypoint {
 				data: {
 					id: faxId,
 					friendlyId: friendlyId,
-					status: 'processing',
+					status: 'queued',
 					originalStatus: 'Submitted',
-					message: "Fax is now in progress",
+					message: "Fax is now queued for processing",
 					timestamp: new Date().toISOString(),
 					recipient: faxRequest.recipients?.[0] || 'unknown',
 					pages: 1,
