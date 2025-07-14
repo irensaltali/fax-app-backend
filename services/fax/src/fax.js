@@ -423,8 +423,8 @@ export default class extends WorkerEntrypoint {
 			// Prepare fax data for database save (for both authenticated and anonymous users)
 			const faxDataForSave = {
 				id: faxId,
-				status: 'queued', // Default status for new fax submissions
-				originalStatus: faxResult?.success ? 'Submitted' : 'Failed',
+				status: 'processing', // Fax is in progress after successful submission
+				originalStatus: 'Submitted',
 				recipients: faxRequest.recipients || [],
 				senderId: faxRequest.senderId,
 				subject: faxRequest.subject || faxRequest.message,
@@ -448,9 +448,9 @@ export default class extends WorkerEntrypoint {
 				data: {
 					id: faxId,
 					friendlyId: friendlyId,
-					status: 'queued',
-					originalStatus: faxResult?.success ? 'Submitted' : 'Failed',
-					message: "Fax has been queued for sending",
+					status: 'processing',
+					originalStatus: 'Submitted',
+					message: "Fax is now in progress",
 					timestamp: new Date().toISOString(),
 					recipient: faxRequest.recipients?.[0] || 'unknown',
 					pages: 1,
