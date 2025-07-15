@@ -344,4 +344,31 @@ export class NotifyreApiUtils {
 /**
  * Legacy status map export for test compatibility
  */
-export const NOTIFYRE_STATUS_MAP = tempProvider.getStatusMap();
+export const NOTIFYRE_STATUS_MAP = (() => {
+	try {
+		return tempProvider.getStatusMap();
+	} catch (error) {
+		// Fallback status map if provider creation fails
+		return {
+			'Preparing': 'queued',
+			'Queued': 'queued',
+			'In Progress': 'processing',
+			'Processing': 'processing',
+			'Sending': 'sending',
+			'Successful': 'delivered',
+			'Delivered': 'delivered',
+			'Sent': 'delivered',
+			'Receiving': 'receiving',
+			'Received': 'delivered',
+			'Failed': 'failed',
+			'Failed - Busy': 'busy',
+			'Failed - No Answer': 'no-answer',
+			'Cancelled': 'cancelled',
+			'Completed': 'delivered',
+			'Error': 'failed',
+			'Timeout': 'failed',
+			'Rejected': 'failed',
+			'Aborted': 'cancelled'
+		};
+	}
+})();

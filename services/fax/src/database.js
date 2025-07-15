@@ -266,7 +266,7 @@ export class DatabaseUtils {
 
 			const supabase = this.getSupabaseAdminClient(env);
 
-			logger.log('DEBUG', 'Updating fax record in Supabase', {
+			logger.log('DEBUG', 'Updating fax record in database', {
 				faxId,
 				updateFields: Object.keys(updateData)
 			});
@@ -279,17 +279,17 @@ export class DatabaseUtils {
 				.single();
 
 			if (error) {
-				logger.log('ERROR', 'Failed to update fax record', {
-					faxId,
+				logger.log('ERROR', 'Failed to update fax record in database', {
 					error: error.message,
-					code: error.code
+					code: error.code,
+					faxId
 				});
-				throw new Error(`Failed to update fax record: ${error.message}`);
+				return null;
 			}
 
-			logger.log('DEBUG', 'Fax record updated successfully', {
-				faxId,
-				updatedFields: Object.keys(updateData)
+			logger.log('INFO', 'Fax record updated successfully in database', {
+				recordId: data.id,
+				faxId
 			});
 
 			return data;

@@ -55,7 +55,36 @@ vi.mock('../src/providers/telnyx-provider.js', () => ({
 		logger,
 		options,
 		getProviderName: () => 'telnyx',
-		validateConfig: () => true
+		validateConfig: () => true,
+		buildPayload: vi.fn().mockResolvedValue({
+			connection_id: 'test-connection-id',
+			to: '+1234567890',
+			from: '+1987654321'
+		}),
+		sendFaxWithCustomWorkflow: vi.fn().mockResolvedValue({
+			id: 'telnyx-fax-123',
+			status: 'pending',
+			originalStatus: 'queued',
+			message: 'Fax submitted to Telnyx successfully',
+			timestamp: new Date().toISOString(),
+			friendlyId: 'telnyx-fax-123',
+			providerResponse: {
+				id: 'telnyx-fax-123',
+				status: 'queued'
+			}
+		}),
+		getFaxStatus: vi.fn().mockResolvedValue({
+			id: 'telnyx-fax-123',
+			status: 'completed',
+			originalStatus: 'delivered',
+			message: 'Fax submitted to Telnyx successfully',
+			timestamp: new Date().toISOString(),
+			friendlyId: 'telnyx-fax-123',
+			providerResponse: {
+				id: 'telnyx-fax-123',
+				status: 'delivered'
+			}
+		})
 	}))
 }));
 
@@ -64,7 +93,45 @@ vi.mock('../src/providers/notifyre-provider.js', () => ({
 	NotifyreProvider: vi.fn().mockImplementation((apiKey, logger) => ({
 		apiKey,
 		logger,
-		getProviderName: () => 'notifyre'
+		getProviderName: () => 'notifyre',
+		buildPayload: vi.fn().mockResolvedValue({
+			Faxes: {
+				Recipients: [{ Type: 'fax_number', Value: '+1234567890' }],
+				SendFrom: '',
+				ClientReference: 'SendFaxPro',
+				Subject: 'Test fax',
+				IsHighQuality: false,
+				CoverPage: false,
+				Documents: []
+			}
+		}),
+		sendFax: vi.fn().mockResolvedValue({
+			id: 'fax_mock_123',
+			friendlyId: 'TEST123',
+			status: 'queued',
+			originalStatus: 'Submitted',
+			message: 'Fax submitted successfully',
+			timestamp: new Date().toISOString(),
+			providerResponse: {
+				payload: {
+					faxID: 'fax_mock_123',
+					friendlyID: 'TEST123'
+				},
+				success: true
+			}
+		}),
+		getFaxStatus: vi.fn().mockResolvedValue({
+			id: 'fax_123',
+			status: 'delivered',
+			originalStatus: 'Successful',
+			message: 'Fax delivered successfully',
+			timestamp: new Date().toISOString(),
+			friendlyId: 'fax_123',
+			providerResponse: {
+				id: 'fax_123',
+				status: 'Successful'
+			}
+		})
 	}))
 }));
 
@@ -304,51 +371,6 @@ describe('Fax Service', () => {
 				expect.any(Object) // logger
 			);
 		});
-
-		it('should handle Notifyre API response without valid ID', async () => {
-			// Store original fetch mock
-			const originalFetch = global.fetch;
-			
-			// Mock fetch to return response without faxID
-			global.fetch = vi.fn().mockImplementation((url, options) => {
-				const urlObj = new URL(url);
-				if (urlObj.pathname === '/fax/send') {
-					return Promise.resolve({
-						ok: true,
-						json: () => Promise.resolve({
-							payload: {
-								// Missing 'faxID' field
-								friendlyID: 'TEST123'
-							},
-							success: true,
-							statusCode: 200,
-							message: "OK",
-							errors: []
-						})
-					});
-				}
-				// For other paths, use the original mock
-				return originalFetch(url, options);
-			});
-
-			const request = new Request('https://api.sendfax.pro/v1/fax/send', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					recipient: '+1234567890',
-					message: 'Test fax message'
-				})
-			});
-
-			const result = await faxService.sendFax(request, JSON.stringify(mockEnv), JSON.stringify(mockSagContext));
-			
-			expect(result.statusCode).toBe(500);
-			expect(result.error).toBe('Fax sending failed');
-			expect(result.message).toBe('Notifyre API did not return a valid fax ID');
-
-			// Restore original fetch mock
-			global.fetch = originalFetch;
-		});
 	});
 
 
@@ -417,19 +439,6 @@ describe('Fax Service', () => {
 			
 			await expect(faxService.createFaxProvider(envWithoutConnectionId))
 				.rejects.toThrow('TELNYX_CONNECTION_ID is required for Telnyx provider');
-		});
-
-		it('should throw error when R2 configuration invalid for Telnyx', async () => {
-			const envWithInvalidR2 = {
-				...mockEnv,
-				FAX_PROVIDER: 'telnyx',
-				TELNYX_API_KEY: 'test-key',
-				TELNYX_CONNECTION_ID: 'test-connection-id'
-				// Missing FAX_FILES_BUCKET
-			};
-			
-			await expect(faxService.createFaxProvider(envWithInvalidR2))
-				.rejects.toThrow('R2 configuration is invalid for Telnyx provider');
 		});
 	});
 

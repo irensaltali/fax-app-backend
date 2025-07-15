@@ -187,7 +187,8 @@ describe('TelnyxProvider', () => {
 		});
 
 		it('should handle workflow failure gracefully', async () => {
-			DatabaseUtils.saveFaxRecord.mockRejectedValue(new Error('Database error'));
+			// Reset the mock to reject for this test
+			DatabaseUtils.saveFaxRecord.mockRejectedValueOnce(new Error('Database error'));
 
 			const faxRequest = {
 				recipients: ['+1234567890'],

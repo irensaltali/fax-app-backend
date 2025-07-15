@@ -40,7 +40,7 @@ export class TelnyxProvider extends BaseFaxProvider {
 
 		const recipient = faxRequest.recipients[0]; // Telnyx sends to one recipient per request
 		this.logger.log('DEBUG', 'Using first recipient for Telnyx', {
-			recipient: recipient.replace(/\d/g, '*')
+			recipient: '+***'
 		});
 
 		// The actual media_url will be set after file upload to R2
@@ -155,7 +155,7 @@ export class TelnyxProvider extends BaseFaxProvider {
 
 				// Convert file to buffer if needed
 				let fileBuffer;
-				if (file instanceof Blob || file instanceof File) {
+				if (file instanceof Blob || file instanceof File || (file && typeof file.arrayBuffer === 'function')) {
 					fileBuffer = await file.arrayBuffer();
 				} else if (file.data) {
 					// Base64 encoded data
@@ -364,6 +364,9 @@ export class TelnyxProvider extends BaseFaxProvider {
 			this.logger.log('ERROR', 'R2 utilities are missing');
 		}
 
-		return hasApiKey && hasConnectionId && hasR2Utils;
+		// Check R2Utils validation if available
+		const r2UtilsValid = hasR2Utils && this.r2Utils.validateConfiguration ? this.r2Utils.validateConfiguration() : hasR2Utils;
+
+		return hasApiKey && hasConnectionId && r2UtilsValid;
 	}
 }
