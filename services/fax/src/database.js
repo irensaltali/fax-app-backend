@@ -250,6 +250,61 @@ export class DatabaseUtils {
 	}
 
 	/**
+	 * Update fax record in Supabase database
+	 * @param {string} faxId - Fax ID to update
+	 * @param {object} updateData - Data to update
+	 * @param {object} env - Environment variables
+	 * @param {object} logger - Logger instance
+	 * @returns {object} Updated fax record
+	 */
+	static async updateFaxRecord(faxId, updateData, env, logger) {
+		try {
+			if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+				logger.log('WARN', 'Supabase not configured, skipping fax record update');
+				return null;
+			}
+
+			const supabase = this.getSupabaseAdminClient(env);
+
+			logger.log('DEBUG', 'Updating fax record in database', {
+				faxId,
+				updateFields: Object.keys(updateData)
+			});
+
+			const { data, error } = await supabase
+				.from('faxes')
+				.update(updateData)
+				.eq('id', faxId)
+				.select()
+				.single();
+
+			if (error) {
+				logger.log('ERROR', 'Failed to update fax record in database', {
+					error: error.message,
+					code: error.code,
+					faxId
+				});
+				return null;
+			}
+
+			logger.log('INFO', 'Fax record updated successfully in database', {
+				recordId: data.id,
+				faxId
+			});
+
+			return data;
+
+		} catch (error) {
+			logger.log('ERROR', 'Error updating fax record', {
+				faxId,
+				error: error.message,
+				stack: error.stack
+			});
+			throw error;
+		}
+	}
+
+	/**
 	 * Store webhook event for audit trail
 	 * @param {object} webhookData - Webhook event data
 	 * @param {object} env - Environment variables

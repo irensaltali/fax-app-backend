@@ -8,6 +8,7 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import { Logger, FileUtils, ApiUtils, isValidFaxStatus } from './utils.js';
 import { DatabaseUtils } from './database.js';
 import { ProviderFactory } from './providers/provider-factory.js';
+import { R2Utils } from './r2-utils.js';
 
 export default class extends WorkerEntrypoint {
 	constructor(ctx, env) {
@@ -216,20 +217,32 @@ export default class extends WorkerEntrypoint {
 	}
 
 	/**
-	 * Create and configure Notifyre fax API client
+	 * Create and configure fax API provider
 	 * @param {object} env - Environment variables
-	 * @returns {NotifyreProvider} Configured Notifyre provider instance
+	 * @returns {NotifyreProvider|TelnyxProvider} Configured provider instance
 	 */
 	async createFaxProvider(env) {
 		// Get API provider name from environment, default to 'notifyre'
 		const apiProviderName = env.FAX_PROVIDER || 'notifyre';
 		
-		// Get the appropriate API key based on the selected provider
+		// Get the appropriate API key and options based on the selected provider
 		let apiKey;
+		let options = {};
+		
 		switch (apiProviderName.toLowerCase()) {
 			case 'notifyre':
 				apiKey = env.NOTIFYRE_API_KEY;
 				break;
+				
+			case 'telnyx':
+				apiKey = env.TELNYX_API_KEY;
+				options = {
+					connectionId: env.TELNYX_CONNECTION_ID,
+					r2Utils: new R2Utils(env, this.logger),
+					env: env
+				};
+				break;
+				
 			// Add other API providers here as they're implemented
 			// case 'twilio':
 			//     apiKey = env.TWILIO_AUTH_TOKEN;
@@ -242,18 +255,29 @@ export default class extends WorkerEntrypoint {
 			throw new Error(`API key not found for ${apiProviderName} provider`);
 		}
 
-		this.logger.log('DEBUG', 'Creating Notifyre API client', { 
+		// Validate provider-specific configuration
+		if (apiProviderName.toLowerCase() === 'telnyx') {
+			if (!options.connectionId) {
+				throw new Error('TELNYX_CONNECTION_ID is required for Telnyx provider');
+			}
+			if (!options.r2Utils.validateConfiguration()) {
+				throw new Error('R2 configuration is invalid for Telnyx provider');
+			}
+		}
+
+		this.logger.log('DEBUG', 'Creating fax API provider', { 
 			apiProvider: apiProviderName,
-			hasApiKey: !!apiKey 
+			hasApiKey: !!apiKey,
+			hasOptions: Object.keys(options).length > 0
 		});
 
-		return ProviderFactory.createProvider(apiProviderName, apiKey, this.logger);
+		return ProviderFactory.createProvider(apiProviderName, apiKey, this.logger, options);
 	}
 
 
 
 	/**
-	 * Send a fax via Notifyre API
+	 * Send a fax via configured provider (Notifyre or Telnyx)
 	 * @param {Request} request - The incoming request
 	 * @param {string} caller_env - Stringified environment from caller
 	 * @param {string} sagContext - Stringified SAG context
@@ -274,8 +298,8 @@ export default class extends WorkerEntrypoint {
 				authorization: request.headers.get('authorization') ? 'Bearer [REDACTED]' : 'none'
 			});
 
-			// Step 1: Create and validate Notifyre API client
-			const notifyreClient = await this.createFaxProvider(this.env);
+			// Step 1: Create and validate fax provider client
+			const faxProvider = await this.createFaxProvider(this.env);
 
 			// Step 2: Parse request body  
 			const requestBody = await this.parseRequestBody(request);
@@ -283,86 +307,73 @@ export default class extends WorkerEntrypoint {
 			// Step 3: Prepare fax request from parsed body
 			const faxRequest = await this.prepareFaxRequest(requestBody);
 
-			// Step 4: Build Notifyre API payload
-			const notifyrePayload = await notifyreClient.buildPayload(faxRequest);
+			// Step 4: Send fax using provider-specific workflow
+			const userId = context.jwtPayload?.sub || context.jwtPayload?.user_id || context.user?.id || null;
+			let faxResult;
 
-			// Step 5: Submit via Notifyre API
-			this.logger.log('INFO', 'Sending fax via Notifyre API', {
-				apiProvider: notifyreClient.getProviderName(),
-				hasPayload: !!notifyrePayload,
-				recipientCount: faxRequest.recipients ? faxRequest.recipients.length : 0,
-				fileCount: faxRequest.files ? faxRequest.files.length : 0
-			});
-
-			const notifyreResult = await notifyreClient.sendFax(notifyrePayload);
-
-			// Validate Notifyre result has required ID
-			if (!notifyreResult.id) {
-				this.logger.log('ERROR', 'Notifyre API did not return a valid fax ID', {
-					apiProvider: notifyreClient.getProviderName(),
-					result: notifyreResult
+			if (faxProvider.getProviderName() === 'telnyx') {
+				// Telnyx custom workflow: Save to Supabase → Upload to R2 → Send fax
+				this.logger.log('INFO', 'Using Telnyx custom workflow', {
+					apiProvider: faxProvider.getProviderName(),
+					recipientCount: faxRequest.recipients ? faxRequest.recipients.length : 0,
+					fileCount: faxRequest.files ? faxRequest.files.length : 0
 				});
-				throw new Error('Notifyre API did not return a valid fax ID');
+
+				faxResult = await faxProvider.sendFaxWithCustomWorkflow(faxRequest, userId);
+
+			} else {
+				// Standard workflow for Notifyre and other providers
+				this.logger.log('INFO', 'Using standard provider workflow', {
+					apiProvider: faxProvider.getProviderName(),
+					recipientCount: faxRequest.recipients ? faxRequest.recipients.length : 0,
+					fileCount: faxRequest.files ? faxRequest.files.length : 0
+				});
+
+				// Build provider payload
+				const providerPayload = await faxProvider.buildPayload(faxRequest);
+
+				// Submit via provider API
+				faxResult = await faxProvider.sendFax(providerPayload);
+
+				// Save fax record to database for non-Telnyx providers
+				await this.saveFaxRecordForStandardWorkflow(faxResult, faxRequest, userId, faxProvider.getProviderName());
 			}
 
-			this.logger.log('INFO', 'Fax submitted successfully via Notifyre', { 
-				faxId: notifyreResult.id, 
-				friendlyId: notifyreResult.friendlyId,
-				apiProvider: notifyreClient.getProviderName()
+			// Validate fax result has required ID
+			if (!faxResult.id) {
+				this.logger.log('ERROR', 'Fax provider did not return a valid fax ID', {
+					apiProvider: faxProvider.getProviderName(),
+					result: faxResult
+				});
+				throw new Error('Fax provider did not return a valid fax ID');
+			}
+
+			this.logger.log('INFO', 'Fax submitted successfully', { 
+				faxId: faxResult.id, 
+				friendlyId: faxResult.friendlyId,
+				apiProvider: faxProvider.getProviderName()
 			});
 
-			// Step 6: Save fax record to database
-			let savedFaxRecord = null;
-			const userId = context.jwtPayload?.sub || context.jwtPayload?.user_id || context.user?.id || null;
-			const isAnonymous = !userId;
-
-			this.logger.log('DEBUG', 'Processing fax record save', {
-				userId: userId || 'anonymous',
-				isAnonymous
-			});
-
-			// Prepare fax data for database save (for both authenticated and anonymous users)
-			const faxDataForSave = {
-				id: notifyreResult.id,
-				status: notifyreResult.status || 'queued',
-				originalStatus: notifyreResult.originalStatus || 'Submitted',
-				recipients: faxRequest.recipients || [],
-				senderId: faxRequest.senderId,
-				subject: faxRequest.subject || faxRequest.message,
-				pages: 1, // Default to 1 page for new submissions
-				cost: null, // Cost will be updated via polling
-				clientReference: faxRequest.clientReference || 'SendFaxPro',
-				sentAt: new Date().toISOString(),
-				completedAt: null,
-				errorMessage: null,
-				notifyreResponse: notifyreResult.providerResponse,
-				friendlyId: notifyreResult.friendlyId,
-				apiProvider: notifyreClient.getProviderName()
-			};
-
-			// Save fax record for both authenticated and anonymous users
-			savedFaxRecord = await DatabaseUtils.saveFaxRecord(faxDataForSave, userId, this.env, this.logger);
-
-			// Step 7: Return success response
+			// Step 5: Return success response
 			const responseData = {
 				statusCode: 200,
 				message: "Fax submitted successfully",
 				data: {
-					id: notifyreResult.id,
-					friendlyId: notifyreResult.friendlyId,
-					status: notifyreResult.status || 'queued',
-					originalStatus: notifyreResult.originalStatus || 'Submitted',
+					id: faxResult.id,
+					friendlyId: faxResult.friendlyId,
+					status: faxResult.status || 'queued',
+					originalStatus: faxResult.originalStatus || 'Submitted',
 					message: "Fax is now queued for processing",
 					timestamp: new Date().toISOString(),
 					recipient: faxRequest.recipients?.[0] || 'unknown',
 					pages: 1,
 					cost: null,
-					apiProvider: notifyreClient.getProviderName(),
-					notifyreResponse: notifyreResult.providerResponse
+					apiProvider: faxProvider.getProviderName(),
+					providerResponse: faxResult.providerResponse
 				}
 			};
 
-			this.logger.log('INFO', 'Returning successful Notifyre fax response', {
+			this.logger.log('INFO', 'Returning successful fax response', {
 				faxId: responseData.data.id,
 				friendlyId: responseData.data.friendlyId,
 				status: responseData.data.status,
@@ -582,7 +593,58 @@ export default class extends WorkerEntrypoint {
 		}
 	}
 
+	/**
+	 * Save fax record for standard workflow (non-Telnyx providers)
+	 * @param {object} faxResult - Result from provider
+	 * @param {object} faxRequest - Original fax request
+	 * @param {string|null} userId - User ID
+	 * @param {string} providerName - Provider name
+	 * @returns {object} Saved fax record
+	 */
+	async saveFaxRecordForStandardWorkflow(faxResult, faxRequest, userId, providerName) {
+		try {
+			this.logger.log('DEBUG', 'Saving fax record for standard workflow', {
+				userId: userId || 'anonymous',
+				providerName
+			});
 
+			// Prepare fax data for database save
+			const faxDataForSave = {
+				id: faxResult.id,
+				status: faxResult.status || 'queued',
+				originalStatus: faxResult.originalStatus || 'Submitted',
+				recipients: faxRequest.recipients || [],
+				senderId: faxRequest.senderId,
+				subject: faxRequest.subject || faxRequest.message,
+				pages: 1, // Default to 1 page for new submissions
+				cost: null, // Cost will be updated via polling
+				clientReference: faxRequest.clientReference || 'SendFaxPro',
+				sentAt: new Date().toISOString(),
+				completedAt: null,
+				errorMessage: null,
+				provider_response: faxResult.providerResponse,
+				friendlyId: faxResult.friendlyId,
+				apiProvider: providerName
+			};
 
+			// Save fax record for both authenticated and anonymous users
+			const savedFaxRecord = await DatabaseUtils.saveFaxRecord(faxDataForSave, userId, this.env, this.logger);
+
+			this.logger.log('DEBUG', 'Fax record saved successfully', {
+				faxId: savedFaxRecord?.id,
+				providerName
+			});
+
+			return savedFaxRecord;
+
+		} catch (error) {
+			this.logger.log('ERROR', 'Failed to save fax record', {
+				error: error.message,
+				providerName
+			});
+			// Don't throw error - we don't want to fail the fax submission if database save fails
+			return null;
+		}
+	}
 
 }

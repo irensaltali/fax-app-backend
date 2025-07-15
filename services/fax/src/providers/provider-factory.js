@@ -4,15 +4,16 @@
  */
 
 import { NotifyreProvider } from './notifyre-provider.js';
+import { TelnyxProvider } from './telnyx-provider.js';
 
 export class ProviderFactory {
 	/**
 	 * Create a fax API provider instance
-	 * @param {string} apiProviderName - Name of the API provider ('notifyre', 'twilio', etc.)
+	 * @param {string} apiProviderName - Name of the API provider ('notifyre', 'telnyx', 'twilio', etc.)
 	 * @param {string} apiKey - API key for the provider
 	 * @param {Logger} logger - Logger instance
 	 * @param {object} options - Additional provider options
-	 * @returns {NotifyreProvider} API provider instance (currently Notifyre)
+	 * @returns {NotifyreProvider|TelnyxProvider} API provider instance
 	 */
 	static createProvider(apiProviderName, apiKey, logger, options = {}) {
 		if (!apiProviderName) {
@@ -31,6 +32,9 @@ export class ProviderFactory {
 			case 'notifyre':
 				return new NotifyreProvider(apiKey, logger);
 			
+			case 'telnyx':
+				return new TelnyxProvider(apiKey, logger, options);
+			
 			// Add other API providers here as they're implemented
 			// case 'twilio':
 			//     return new TwilioProvider(apiKey, logger);
@@ -38,7 +42,7 @@ export class ProviderFactory {
 			//     return new ClickSendProvider(apiKey, logger);
 			
 			default:
-				throw new Error(`Unsupported API provider: ${apiProviderName}. Currently supported: notifyre`);
+				throw new Error(`Unsupported API provider: ${apiProviderName}. Currently supported: notifyre, telnyx`);
 		}
 	}
 
@@ -48,7 +52,8 @@ export class ProviderFactory {
 	 */
 	static getSupportedProviders() {
 		return [
-			'notifyre' // Current API provider
+			'notifyre', // Original provider
+			'telnyx'    // New provider with R2 integration
 			// Add other API providers here as they're implemented
 			// 'twilio',
 			// 'clicksend'
@@ -79,6 +84,12 @@ export class ProviderFactory {
 				// Notifyre specific validation
 				return typeof config.apiKey === 'string' && config.apiKey.length > 0;
 			
+			case 'telnyx':
+				// Telnyx specific validation
+				const hasApiKey = typeof config.apiKey === 'string' && config.apiKey.length > 0;
+				const hasConnectionId = typeof config.connectionId === 'string' && config.connectionId.length > 0;
+				return hasApiKey && hasConnectionId;
+			
 			default:
 				return true;
 		}
@@ -103,6 +114,36 @@ export class ProviderFactory {
 						type: 'string',
 						default: 'https://api.notifyre.com',
 						description: 'Notifyre API base URL'
+					}
+				};
+			
+			case 'telnyx':
+				return {
+					apiKey: {
+						required: true,
+						type: 'string',
+						description: 'Telnyx API token'
+					},
+					connectionId: {
+						required: true,
+						type: 'string',
+						description: 'Telnyx connection ID (Programmable Fax Application ID)'
+					},
+					baseUrl: {
+						required: false,
+						type: 'string',
+						default: 'https://api.telnyx.com',
+						description: 'Telnyx API base URL'
+					},
+					r2BucketBinding: {
+						required: true,
+						type: 'string',
+						description: 'Cloudflare R2 bucket binding name (FAX_FILES_BUCKET)'
+					},
+					r2PublicDomain: {
+						required: true,
+						type: 'string',
+						description: 'R2 public domain for file access (R2_PUBLIC_DOMAIN)'
 					}
 				};
 			
