@@ -2,7 +2,11 @@
 
 ## Overview
 
-This API provides comprehensive fax functionality powered by Notifyre's secure, HIPAA-compliant fax service. The API supports sending faxes, checking status, retrieving sent and received faxes, downloading fax documents, managing fax numbers, and handling webhooks.
+This API provides comprehensive fax functionality with support for multiple providers:
+- **Notifyre** - Secure, HIPAA-compliant fax service (default)
+- **Telnyx** - Programmable Fax API with R2 storage integration
+
+The API supports sending faxes, checking status, retrieving sent and received faxes, downloading fax documents, managing fax numbers, and handling webhooks.
 
 ## Base URL
 - **Staging**: `https://api-staging.sendfax.pro`
@@ -17,11 +21,21 @@ Authorization: Bearer <your-jwt-token>
 
 ## Environment Variables Required
 
-- `NOTIFYRE_API_KEY`: Your Notifyre API key
-- `NOTIFYRE_WEBHOOK_SECRET`: (Optional) Secret for webhook signature verification
+### Core Configuration
+- `FAX_PROVIDER`: Provider selection (`notifyre` or `telnyx`, defaults to `notifyre`)
 - `SUPABASE_URL`: Supabase project URL
 - `SUPABASE_SERVICE_ROLE_KEY`: Supabase service role key
 - `SUPABASE_JWT_SECRET`: JWT secret for token verification
+
+### Notifyre Provider (default)
+- `NOTIFYRE_API_KEY`: Your Notifyre API key
+- `NOTIFYRE_WEBHOOK_SECRET`: (Optional) Secret for webhook signature verification
+
+### Telnyx Provider (optional)
+- `TELNYX_API_KEY`: Your Telnyx API key
+- `TELNYX_CONNECTION_ID`: Telnyx Programmable Fax Application ID
+- `R2_PUBLIC_DOMAIN`: Public domain for R2 file access (e.g., `https://files.yourdomain.com`)
+- `FAX_FILES_BUCKET`: R2 bucket binding (configured in wrangler.toml)
 
 ## API Endpoints
 

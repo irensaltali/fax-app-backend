@@ -9,12 +9,23 @@ workers_dev = false
 [observability]
 enabled = true
 
+# R2 bucket binding for file storage (required for Telnyx provider)
+[[r2_buckets]]
+binding = "FAX_FILES_BUCKET"
+bucket_name = "fax-files"
+preview_bucket_name = "fax-files-preview"
+
 [env.staging]
 name = "fax-service-staging"
 
 [env.staging.observability]
 enabled = true
 
+# Staging R2 bucket
+[[env.staging.r2_buckets]]
+binding = "FAX_FILES_BUCKET"
+bucket_name = "fax-files-staging"
+preview_bucket_name = "fax-files-staging-preview"
 
 [env.prod]
 name = "fax-service-prod" 
@@ -22,3 +33,9 @@ minify = true
 
 [env.prod.observability]
 enabled = true
+
+# Production R2 bucket
+[[env.prod.r2_buckets]]
+binding = "FAX_FILES_BUCKET"
+bucket_name = "fax-files-prod"
+preview_bucket_name = "fax-files-prod-preview"
