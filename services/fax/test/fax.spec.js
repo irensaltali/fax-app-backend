@@ -38,6 +38,36 @@ vi.mock('cloudflare:workers', () => ({
 	}
 }));
 
+// Mock R2Utils
+vi.mock('../src/r2-utils.js', () => ({
+	R2Utils: vi.fn().mockImplementation((env, logger) => ({
+		env,
+		logger,
+		validateConfiguration: vi.fn().mockReturnValue(true),
+		uploadFile: vi.fn().mockResolvedValue('https://test.r2.url/file.pdf')
+	}))
+}));
+
+// Mock TelnyxProvider
+vi.mock('../src/providers/telnyx-provider.js', () => ({
+	TelnyxProvider: vi.fn().mockImplementation((apiKey, logger, options) => ({
+		apiKey,
+		logger,
+		options,
+		getProviderName: () => 'telnyx',
+		validateConfig: () => true
+	}))
+}));
+
+// Mock NotifyreProvider
+vi.mock('../src/providers/notifyre-provider.js', () => ({
+	NotifyreProvider: vi.fn().mockImplementation((apiKey, logger) => ({
+		apiKey,
+		logger,
+		getProviderName: () => 'notifyre'
+	}))
+}));
+
 // Mock fetch for Notifyre API calls
 global.fetch = vi.fn();
 
@@ -334,7 +364,74 @@ describe('Fax Service', () => {
 		});
 	});
 
+	describe('Provider Selection', () => {
+		it('should default to Notifyre provider when FAX_PROVIDER not set', async () => {
+			const envWithoutProvider = { ...mockEnv };
+			delete envWithoutProvider.FAX_PROVIDER;
+			
+			const provider = await faxService.createFaxProvider(envWithoutProvider);
+			expect(provider.getProviderName()).toBe('notifyre');
+		});
 
+		it('should use Notifyre provider when FAX_PROVIDER=notifyre', async () => {
+			const envWithNotifyre = { ...mockEnv, FAX_PROVIDER: 'notifyre' };
+			
+			const provider = await faxService.createFaxProvider(envWithNotifyre);
+			expect(provider.getProviderName()).toBe('notifyre');
+		});
+
+		it('should use Telnyx provider when FAX_PROVIDER=telnyx', async () => {
+			const envWithTelnyx = {
+				...mockEnv,
+				FAX_PROVIDER: 'telnyx',
+				TELNYX_API_KEY: 'test-telnyx-key',
+				TELNYX_CONNECTION_ID: 'test-connection-id',
+				FAX_FILES_BUCKET: { put: vi.fn(), get: vi.fn(), name: 'test-bucket' },
+				CLOUDFLARE_ACCOUNT_ID: 'test-account-id'
+			};
+			
+			const provider = await faxService.createFaxProvider(envWithTelnyx);
+			expect(provider.getProviderName()).toBe('telnyx');
+		});
+
+		it('should throw error for unsupported provider', async () => {
+			const envWithUnsupported = { ...mockEnv, FAX_PROVIDER: 'unsupported' };
+			
+			await expect(faxService.createFaxProvider(envWithUnsupported))
+				.rejects.toThrow('Unsupported API provider: unsupported');
+		});
+
+		it('should throw error when Telnyx API key missing', async () => {
+			const envWithoutKey = { ...mockEnv, FAX_PROVIDER: 'telnyx' };
+			
+			await expect(faxService.createFaxProvider(envWithoutKey))
+				.rejects.toThrow('API key not found for telnyx provider');
+		});
+
+		it('should throw error when Telnyx connection ID missing', async () => {
+			const envWithoutConnectionId = {
+				...mockEnv,
+				FAX_PROVIDER: 'telnyx',
+				TELNYX_API_KEY: 'test-key'
+			};
+			
+			await expect(faxService.createFaxProvider(envWithoutConnectionId))
+				.rejects.toThrow('TELNYX_CONNECTION_ID is required for Telnyx provider');
+		});
+
+		it('should throw error when R2 configuration invalid for Telnyx', async () => {
+			const envWithInvalidR2 = {
+				...mockEnv,
+				FAX_PROVIDER: 'telnyx',
+				TELNYX_API_KEY: 'test-key',
+				TELNYX_CONNECTION_ID: 'test-connection-id'
+				// Missing FAX_FILES_BUCKET
+			};
+			
+			await expect(faxService.createFaxProvider(envWithInvalidR2))
+				.rejects.toThrow('R2 configuration is invalid for Telnyx provider');
+		});
+	});
 
 	describe('health handlers', () => {
 		it('should return healthy status (unauthenticated)', async () => {

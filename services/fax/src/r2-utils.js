@@ -259,16 +259,13 @@ export class R2Utils {
 	 */
 	validateConfiguration() {
 		const hasBucket = !!this.bucket;
-		const hasPublicDomain = !!this.publicDomain;
 
 		if (!hasBucket) {
 			this.logger.log('ERROR', 'R2 bucket (FAX_FILES_BUCKET) not configured');
 		}
-		if (!hasPublicDomain) {
-			this.logger.log('ERROR', 'R2 public domain (R2_PUBLIC_DOMAIN) not configured');
-		}
 
-		return hasBucket && hasPublicDomain;
+		// Note: Public domain is no longer required since we use presigned URLs
+		return hasBucket;
 	}
 
 	/**
@@ -278,7 +275,7 @@ export class R2Utils {
 	getBucketInfo() {
 		return {
 			configured: !!this.bucket,
-			publicDomain: this.publicDomain,
+			presignedUrls: true, // Using presigned URLs instead of public domain
 			bucketName: this.bucket?.name || 'not configured'
 		};
 	}
