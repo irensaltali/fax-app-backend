@@ -238,7 +238,7 @@ export default class extends WorkerEntrypoint {
 				apiKey = env.TELNYX_API_KEY;
 				options = {
 					connectionId: env.TELNYX_CONNECTION_ID,
-					r2Utils: new R2Utils(env, this.logger),
+					r2Utils: new R2Utils(this.logger),
 					env: env
 				};
 				break;
@@ -623,6 +623,98 @@ export default class extends WorkerEntrypoint {
 			return {
 				statusCode: 500,
 				error: "Authenticated health check failed",
+				message: error.message
+			};
+		}
+	}
+
+	/**
+	 * uploadFilesToR2()
+	 * Debug helper endpoint – behaves like sendFax but only uploads the provided
+	 * files to the configured R2 bucket and returns their presigned URLs.
+	 *
+	 * @param {Request} request        Incoming Fetch Request
+	 * @param {string} caller_env      Stringified caller environment (from SAG)
+	 * @param {string} sagContext      Stringified SAG context (unused, but logged)
+	 * @returns {object}               Standard JSON response with uploaded file URLs
+	 */
+	async uploadFilesToR2(request, caller_env, sagContext) {
+		try {
+			// Parse and initialise runtime context
+			this.env = JSON.parse(caller_env || "{}");
+			this.initializeLogger(this.env);
+
+			this.logger.log('INFO', 'Upload-to-R2 debug endpoint called', {
+				method: request.method,
+				url: request.url,
+				contentType: request.headers.get('content-type')
+			});
+
+			// Step 1: Parse body
+			const requestBody = await this.parseRequestBody(request);
+
+			// Step 2: Re-use prepareFaxRequest to leverage existing file extraction logic
+			const faxRequest = await this.prepareFaxRequest(requestBody);
+
+			if (!faxRequest.files || faxRequest.files.length === 0) {
+				throw new Error('No files provided in request');
+			}
+
+			// Step 3: Instantiate R2 utilities
+			const r2Utils = new R2Utils(this.logger);
+
+			if (!r2Utils.validateConfiguration()) {
+				throw new Error('R2 configuration invalid – check FAX_FILES_BUCKET binding');
+			}
+
+			// Step 4: Upload each file and collect URLs
+			const uploaded = [];
+			for (let i = 0; i < faxRequest.files.length; i++) {
+				const file = faxRequest.files[i];
+				let buffer;
+				let contentType = 'application/pdf';
+
+				if (file instanceof Blob || (file && typeof file.arrayBuffer === 'function')) {
+					buffer = await file.arrayBuffer();
+					contentType = file.type || contentType;
+				} else if (file instanceof Uint8Array || file instanceof ArrayBuffer) {
+					buffer = file;
+				} else {
+					this.logger.log('WARN', 'Unsupported file format, attempting to stringify', { index: i });
+					buffer = new TextEncoder().encode(String(file));
+					contentType = 'text/plain';
+				}
+
+				const timestamp = Date.now();
+				const filename = `debug/${timestamp}_${i + 1}` + (contentType === 'application/pdf' ? '.pdf' : '');
+
+				const url = await r2Utils.uploadFile(filename, buffer, contentType);
+				uploaded.push({ filename, url });
+			}
+
+			this.logger.log('INFO', 'Files uploaded to R2 via debug endpoint', { count: uploaded.length });
+
+			return {
+				statusCode: 200,
+				message: 'Files uploaded successfully',
+				data: {
+					fileCount: uploaded.length,
+					files: uploaded,
+					timestamp: new Date().toISOString()
+				}
+			};
+
+		} catch (error) {
+			if (this.logger) {
+				this.logger.log('ERROR', 'Upload-to-R2 debug endpoint failed', {
+					error: error.message,
+					stack: error.stack
+				});
+			}
+
+			return {
+				statusCode: 500,
+				error: 'File upload failed',
 				message: error.message
 			};
 		}

@@ -21,6 +21,10 @@ name = "fax-service-staging"
 [env.staging.observability]
 enabled = true
 
+[env.staging.vars]
+LOG_LEVEL = "DEBUG"
+FAX_FILES_BUCKET_PUBLIC_URL = "https://pub-e22338f6c85449cea0f44573d2441665.r2.dev"
+
 # Staging R2 bucket
 [[env.staging.r2_buckets]]
 binding = "FAX_FILES_BUCKET"

@@ -3,13 +3,20 @@
  * Handles file uploads to R2 bucket and generates presigned URLs
  */
 
+import { env } from "cloudflare:workers";
+
 export class R2Utils {
-	constructor(env, logger) {
-		this.env = env;
+	constructor(logger) {
+
+		// Logger instance for structured logs
 		this.logger = logger;
-		this.bucket = env.FAX_FILES_BUCKET;
-		// Default presigned URL expiration: 12 hours (for Telnyx access)
-		this.defaultExpirationSeconds = 12 * 60 * 60; // 12 hours
+
+		// Bind the R2 bucket using the binding exposed by Cloudflare Workers.
+		this.bucket = env.FAX_FILES_BUCKET || null;
+
+		// Base public URL for files served from R2 (configured in wrangler.toml)
+		// Example: https://pub-<hash>.r2.dev
+		this.publicUrlBase = env.FAX_FILES_BUCKET_PUBLIC_URL || null;
 	}
 
 	/**
@@ -26,13 +33,11 @@ export class R2Utils {
 				throw new Error('R2 bucket not configured. FAX_FILES_BUCKET environment variable is required.');
 			}
 
-			const expiration = expirationSeconds || this.defaultExpirationSeconds;
-
 			this.logger.log('DEBUG', 'Uploading file to R2', {
 				filename,
 				contentType,
 				size: fileData.byteLength || fileData.length,
-				expirationHours: Math.round(expiration / 3600)
+				publicUrlBaseConfigured: !!this.publicUrlBase
 			});
 
 			// Upload file to R2
@@ -42,21 +47,19 @@ export class R2Utils {
 				},
 				customMetadata: {
 					uploadedAt: new Date().toISOString(),
-					uploadedBy: 'fax-service',
-					expirationSeconds: expiration.toString()
+					uploadedBy: 'fax-service'
 				}
 			});
 
-			// Generate presigned URL for Telnyx access
-			const presignedUrl = await this.getPresignedUrl(filename, expiration);
+			// Construct public URL using configured base
+			const publicUrl = this.generatePublicUrl(filename);
 
 			this.logger.log('INFO', 'File uploaded to R2 successfully', {
 				filename,
-				hasPresignedUrl: !!presignedUrl,
-				expirationHours: Math.round(expiration / 3600)
+				publicUrl
 			});
 
-			return presignedUrl;
+			return publicUrl;
 
 		} catch (error) {
 			this.logger.log('ERROR', 'Failed to upload file to R2', {
@@ -68,142 +71,22 @@ export class R2Utils {
 		}
 	}
 
-	/**
-	 * Generate presigned URL for R2 object using proper R2 API
-	 * @param {string} filename - File path/name in bucket
-	 * @param {number} expirationSeconds - URL expiration time in seconds
-	 * @returns {Promise<string>} Presigned URL
-	 */
-	async getPresignedUrl(filename, expirationSeconds = null) {
-		try {
-			if (!this.bucket) {
-				throw new Error('R2 bucket not configured');
-			}
-
-			const expiration = expirationSeconds || this.defaultExpirationSeconds;
-
-			this.logger.log('DEBUG', 'Generating R2 presigned URL', {
-				filename,
-				expirationHours: Math.round(expiration / 3600)
-			});
-
-			// Use R2's native presigned URL generation
-			// This creates a presigned URL that allows GET access to the object
-			const presignedUrl = await this.bucket.createMultipartUpload(filename);
-			
-			// Since R2 doesn't have a direct presigned URL method in the current API,
-			// we'll use the object URL with proper signing parameters
-			// This approach works with R2's S3-compatible API
-			
-			// For R2, we can use the S3-compatible presigned URL generation
-			// This will handle both existing and non-existing files appropriately
-			const presignedGetUrl = await this.generateS3CompatiblePresignedUrl(filename, expiration);
-			
-			this.logger.log('DEBUG', 'Generated R2 presigned URL successfully', {
-				filename,
-				expirationHours: Math.round(expiration / 3600),
-				hasUrl: !!presignedGetUrl
-			});
-
-			return presignedGetUrl;
-
-		} catch (error) {
-			this.logger.log('ERROR', 'Failed to generate R2 presigned URL', {
-				filename,
-				error: error.message
-			});
-			
-			// Fallback to a constructed URL approach
-			const expiration = expirationSeconds || this.defaultExpirationSeconds;
-			return this.generateFallbackPresignedUrl(filename, expiration);
-		}
+	// Deprecated API kept for backward compatibility – now returns public URL
+	async getPresignedUrl(filename) {
+		this.logger.log('DEBUG', 'getPresignedUrl deprecated – returning public URL', { filename });
+		return this.generatePublicUrl(filename);
 	}
 
-	/**
-	 * Generate S3-compatible presigned URL for R2
-	 * R2 supports S3-compatible presigned URLs using AWS signature v4
-	 * @param {string} filename - File path/name in bucket
-	 * @param {number} expirationSeconds - URL expiration time in seconds
-	 * @returns {Promise<string>} Presigned URL
-	 */
-	async generateS3CompatiblePresignedUrl(filename, expirationSeconds) {
-		try {
-			// R2 provides S3-compatible presigned URLs through the R2 API
-			// We'll use the bucket's built-in URL generation if available
-			
-			// For Cloudflare R2, the presigned URL is generated through the R2 binding
-			// This method will use R2's native presigned URL capabilities
-			
-			if (this.bucket && typeof this.bucket.get === 'function') {
-				// Try to get the object and extract its URL properties
-				const objectResponse = await this.bucket.get(filename);
-				
-				if (objectResponse && objectResponse.url) {
-					// Use R2's built-in URL with proper expiration
-					const url = new URL(objectResponse.url);
-					
-					// Add AWS S3-style query parameters for presigned URL
-					const expiration = Math.floor(Date.now() / 1000) + expirationSeconds;
-					url.searchParams.set('X-Amz-Expires', expirationSeconds.toString());
-					url.searchParams.set('X-Amz-Date', new Date().toISOString().replace(/[:-]|\.\d{3}/g, ''));
-					url.searchParams.set('X-Amz-Algorithm', 'AWS4-HMAC-SHA256');
-					
-					return url.toString();
-				}
-			}
-			
-			// Fallback to constructed URL
-			return this.generateFallbackPresignedUrl(filename, expirationSeconds);
-			
-		} catch (error) {
-			this.logger.log('DEBUG', 'S3-compatible presigned URL generation failed, using fallback', {
-				filename,
-				error: error.message
-			});
-			return this.generateFallbackPresignedUrl(filename, expirationSeconds);
+	// Removed presigned URL support – helper now constructs public URL
+	generatePublicUrl(filename) {
+		if (!this.publicUrlBase) {
+			throw new Error('FAX_FILES_BUCKET_PUBLIC_URL environment variable is not configured');
 		}
-	}
 
-	/**
-	 * Generate fallback presigned URL for R2
-	 * This creates a URL that should work with R2's S3-compatible interface
-	 * @param {string} filename - File path/name in bucket
-	 * @param {number} expirationSeconds - URL expiration time in seconds
-	 * @returns {string} Fallback presigned URL
-	 */
-	generateFallbackPresignedUrl(filename, expirationSeconds) {
-		// Generate a URL that works with R2's S3-compatible API
-		// This is a simplified approach that constructs a URL with the correct structure
-		
-		const bucketName = this.bucket?.name || 'fax-files';
-		const accountId = this.env.CLOUDFLARE_ACCOUNT_ID || 'unknown-account';
-		
-		// R2 URLs follow this pattern: https://<account-id>.r2.cloudflarestorage.com/<bucket>/<key>
-		const baseUrl = `https://${accountId}.r2.cloudflarestorage.com`;
-		
 		// Clean up the filename (remove leading slash if present)
 		const cleanFilename = filename.startsWith('/') ? filename.slice(1) : filename;
-		
-		// Construct the URL with query parameters for access
-		const url = new URL(`${baseUrl}/${bucketName}/${cleanFilename}`);
-		
-		// Add query parameters that make it work as a presigned URL
-		const expiration = Math.floor(Date.now() / 1000) + expirationSeconds;
-		const currentDate = new Date().toISOString().replace(/[:-]|\.\d{3}/g, '');
-		
-		url.searchParams.set('X-Amz-Algorithm', 'AWS4-HMAC-SHA256');
-		url.searchParams.set('X-Amz-Expires', expirationSeconds.toString());
-		url.searchParams.set('X-Amz-Date', currentDate);
-		url.searchParams.set('X-Amz-SignedHeaders', 'host');
-		
-		this.logger.log('DEBUG', 'Generated fallback presigned URL', {
-			filename: cleanFilename,
-			bucketName,
-			expirationHours: Math.round(expirationSeconds / 3600),
-			url: url.toString()
-		});
-		
-		return url.toString();
+
+		return `${this.publicUrlBase}/${cleanFilename}`;
 	}
 
 	/**
@@ -292,9 +175,8 @@ export class R2Utils {
 	 * @param {number} expiresIn - Expiration time in seconds
 	 * @returns {Promise<string>} Signed URL
 	 */
-	async getSignedUrl(filename, expiresIn = null) {
-		const expiration = expiresIn || this.defaultExpirationSeconds;
-		return await this.getPresignedUrl(filename, expiration);
+	async getSignedUrl(filename) {
+		return this.generatePublicUrl(filename);
 	}
 
 	/**
@@ -328,9 +210,11 @@ export class R2Utils {
 		if (!hasBucket) {
 			this.logger.log('ERROR', 'R2 bucket (FAX_FILES_BUCKET) not configured');
 		}
+		if (!this.publicUrlBase) {
+			this.logger.log('ERROR', 'FAX_FILES_BUCKET_PUBLIC_URL not configured');
+		}
 
-		// Note: Public domain is no longer required since we use presigned URLs
-		return hasBucket;
+		return hasBucket && !!this.publicUrlBase;
 	}
 
 	/**
@@ -340,7 +224,7 @@ export class R2Utils {
 	getBucketInfo() {
 		return {
 			configured: !!this.bucket,
-			presignedUrls: true, // Using presigned URLs instead of public domain
+			presignedUrls: false,
 			bucketName: this.bucket?.name || 'not configured'
 		};
 	}

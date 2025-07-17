@@ -116,6 +116,16 @@
                 "function": "debug"
             },
             "auth": false
+        },
+        {
+            "method": "POST",
+            "path": "/v1/fax/upload-to-r2",
+            "integration": {
+                "type": "service_binding",
+                "binding": "fax_service",
+                "function": "uploadFilesToR2"
+            },
+            "auth": false
         }
     ]
 }

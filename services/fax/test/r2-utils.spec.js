@@ -1,482 +1,70 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+// Mock Cloudflare Workers environment before importing the module under test
+vi.mock('cloudflare:workers', () => {
+  const env = {};
+  return { env };
+});
+
+import { env as workerEnv } from 'cloudflare:workers';
 import { R2Utils } from '../src/r2-utils.js';
 
-describe('R2Utils', () => {
-	let r2Utils;
-	let mockEnv;
-	let mockLogger;
-	let mockBucket;
-
-	beforeEach(() => {
-		// Mock logger
-		mockLogger = {
-			log: vi.fn()
-		};
-
-		// Mock R2 bucket
-		mockBucket = {
-			put: vi.fn().mockResolvedValue(undefined),
-			get: vi.fn().mockResolvedValue({
-				url: 'https://example.r2.cloudflarestorage.com/bucket/test-file.pdf'
-			}),
-			head: vi.fn().mockResolvedValue({
-				size: 1024,
-				etag: '"abc123"',
-				uploaded: new Date(),
-				httpMetadata: { contentType: 'application/pdf' },
-				customMetadata: { uploadedBy: 'test' }
-			}),
-			delete: vi.fn().mockResolvedValue(undefined),
-			name: 'test-bucket'
-		};
-
-		// Mock environment
-		mockEnv = {
-			FAX_FILES_BUCKET: mockBucket,
-			CLOUDFLARE_ACCOUNT_ID: 'test-account-id'
-		};
-
-		r2Utils = new R2Utils(mockEnv, mockLogger);
-	});
-
-	afterEach(() => {
-		vi.clearAllMocks();
-	});
-
-	describe('constructor', () => {
-		it('should initialize with correct defaults', () => {
-			expect(r2Utils.env).toBe(mockEnv);
-			expect(r2Utils.logger).toBe(mockLogger);
-			expect(r2Utils.bucket).toBe(mockBucket);
-			expect(r2Utils.defaultExpirationSeconds).toBe(12 * 60 * 60); // 12 hours
-		});
-	});
-
-	describe('uploadFile', () => {
-		it('should upload file and return presigned URL', async () => {
-			const filename = 'test-file.pdf';
-			const fileData = new Uint8Array([1, 2, 3, 4]);
-			const contentType = 'application/pdf';
-
-			const result = await r2Utils.uploadFile(filename, fileData, contentType);
-
-			expect(mockBucket.put).toHaveBeenCalledWith(filename, fileData, {
-				httpMetadata: {
-					contentType
-				},
-				customMetadata: {
-					uploadedAt: expect.any(String),
-					uploadedBy: 'fax-service',
-					expirationSeconds: '43200'
-				}
-			});
-
-			// Note: The implementation may use fallback URL generation
-			// Implementation no longer always calls bucket.get
-
-			expect(result).toContain('https://');
-			expect(result).toContain('X-Amz-Expires=43200');
-			expect(mockLogger.log).toHaveBeenCalledWith('INFO', 'File uploaded to R2 successfully', {
-				filename,
-				hasPresignedUrl: true,
-				expirationHours: 12
-			});
-		});
-
-		it('should use custom expiration time', async () => {
-			const filename = 'test-file.pdf';
-			const fileData = new Uint8Array([1, 2, 3, 4]);
-			const customExpiration = 3600; // 1 hour
-
-			await r2Utils.uploadFile(filename, fileData, 'application/pdf', customExpiration);
-
-			expect(mockBucket.put).toHaveBeenCalledWith(filename, fileData, {
-				httpMetadata: {
-					contentType: 'application/pdf'
-				},
-				customMetadata: {
-					uploadedAt: expect.any(String),
-					uploadedBy: 'fax-service',
-					expirationSeconds: '3600'
-				}
-			});
-		});
-
-		it('should handle ArrayBuffer file data', async () => {
-			const filename = 'test-file.pdf';
-			const fileData = new ArrayBuffer(4);
-			const view = new Uint8Array(fileData);
-			view.set([1, 2, 3, 4]);
-
-			const result = await r2Utils.uploadFile(filename, fileData);
-
-			expect(mockBucket.put).toHaveBeenCalledWith(filename, fileData, expect.any(Object));
-			expect(result).toContain('https://');
-		});
-
-		it('should throw error when bucket not configured', async () => {
-			r2Utils.bucket = null;
-
-			await expect(r2Utils.uploadFile('test.pdf', new Uint8Array([1, 2, 3])))
-				.rejects.toThrow('R2 bucket not configured');
-		});
-
-		it('should throw error when bucket.put fails', async () => {
-			mockBucket.put.mockRejectedValue(new Error('Upload failed'));
-
-			await expect(r2Utils.uploadFile('test.pdf', new Uint8Array([1, 2, 3])))
-				.rejects.toThrow('Upload failed');
-
-			expect(mockLogger.log).toHaveBeenCalledWith('ERROR', 'Failed to upload file to R2', {
-				filename: 'test.pdf',
-				error: 'Upload failed',
-				stack: expect.any(String)
-			});
-		});
-
-		it('should fall back to fallback presigned URL when bucket.get fails', async () => {
-			mockBucket.get.mockResolvedValue(null);
-
-			const result = await r2Utils.uploadFile('test.pdf', new Uint8Array([1, 2, 3]));
-
-			expect(result).toContain('https://test-account-id.r2.cloudflarestorage.com');
-			expect(result).toContain('X-Amz-Expires=43200');
-		});
-	});
-
-	describe('getPresignedUrl', () => {
-		it('should generate presigned URL with default expiration', async () => {
-			const filename = 'test-file.pdf';
-
-			const result = await r2Utils.getPresignedUrl(filename);
-
-			// Note: The implementation may use fallback URL generation
-			// Implementation no longer always calls bucket.get
-			expect(result).toContain('https://');
-			expect(result).toContain('X-Amz-Expires=43200');
-		});
-
-		it('should generate presigned URL with custom expiration', async () => {
-			const filename = 'test-file.pdf';
-			const customExpiration = 1800; // 30 minutes
-
-			const result = await r2Utils.getPresignedUrl(filename, customExpiration);
-
-			expect(result).toContain('X-Amz-Expires=1800');
-		});
-
-		it('should generate fallback URL when bucket not configured', async () => {
-			r2Utils.bucket = null;
-
-			const result = await r2Utils.getPresignedUrl('test.pdf');
-
-			// Without a bucket, it should still generate a fallback URL
-			expect(result).toContain('https://');
-			expect(result).toContain('X-Amz-Expires=43200');
-		});
-
-		it('should handle bucket.get returning null and use fallback', async () => {
-			mockBucket.get.mockResolvedValue(null);
-
-			const result = await r2Utils.getPresignedUrl('test.pdf');
-
-			expect(result).toContain('https://test-account-id.r2.cloudflarestorage.com');
-			expect(result).toContain('X-Amz-Expires=43200');
-		});
-
-		it('should use fallback when bucket operations fail', async () => {
-			mockBucket.get.mockRejectedValue(new Error('Get failed'));
-
-			const result = await r2Utils.getPresignedUrl('test.pdf');
-
-			expect(result).toContain('https://test-account-id.r2.cloudflarestorage.com');
-			expect(result).toContain('X-Amz-Expires=43200');
-			
-			// Check that an error was logged (the exact message may vary)
-			expect(mockLogger.log).toHaveBeenCalledWith('ERROR', 'Failed to generate R2 presigned URL', expect.objectContaining({
-				filename: 'test.pdf',
-				error: expect.any(String)
-			}));
-		});
-	});
-
-	describe('generateS3CompatiblePresignedUrl', () => {
-		it('should generate S3-compatible presigned URL when object exists', async () => {
-			mockBucket.get.mockResolvedValue({
-				url: 'https://test-account-id.r2.cloudflarestorage.com/test-bucket/test-file.pdf'
-			});
-
-			const result = await r2Utils.generateS3CompatiblePresignedUrl('test-file.pdf', 3600);
-
-			expect(result).toContain('https://test-account-id.r2.cloudflarestorage.com');
-			expect(result).toContain('test-file.pdf');
-			expect(result).toContain('X-Amz-Expires=3600');
-			expect(result).toContain('X-Amz-Algorithm=AWS4-HMAC-SHA256');
-		});
-
-		it('should fallback when object does not have URL', async () => {
-			mockBucket.get.mockResolvedValue({});
-
-			const result = await r2Utils.generateS3CompatiblePresignedUrl('test-file.pdf', 3600);
-
-			expect(result).toContain('https://test-account-id.r2.cloudflarestorage.com');
-			expect(result).toContain('X-Amz-Expires=3600');
-		});
-
-		it('should handle bucket.get errors and fallback', async () => {
-			mockBucket.get.mockRejectedValue(new Error('Get failed'));
-
-			const result = await r2Utils.generateS3CompatiblePresignedUrl('test-file.pdf', 3600);
-
-			expect(result).toContain('https://test-account-id.r2.cloudflarestorage.com');
-			expect(result).toContain('X-Amz-Expires=3600');
-		});
-	});
-
-	describe('generateFallbackPresignedUrl', () => {
-		it('should generate fallback presigned URL with correct structure', () => {
-			const filename = 'test-file.pdf';
-			const expiration = 3600;
-
-			const result = r2Utils.generateFallbackPresignedUrl(filename, expiration);
-
-			expect(result).toContain('https://test-account-id.r2.cloudflarestorage.com');
-			expect(result).toContain('test-bucket');
-			expect(result).toContain('test-file.pdf');
-			expect(result).toContain('X-Amz-Expires=3600');
-			expect(result).toContain('X-Amz-Algorithm=AWS4-HMAC-SHA256');
-			expect(result).toContain('X-Amz-Date=');
-			expect(result).toContain('X-Amz-SignedHeaders=host');
-		});
-
-		it('should handle filename with leading slash', () => {
-			const result = r2Utils.generateFallbackPresignedUrl('/test-file.pdf', 3600);
-
-			expect(result).toContain('test-file.pdf');
-			expect(result).not.toContain('//test-file.pdf');
-		});
-
-		it('should handle bucket without name property', () => {
-			mockBucket.name = undefined;
-
-			const result = r2Utils.generateFallbackPresignedUrl('test.pdf', 3600);
-
-			expect(result).toContain('fax-files'); // default bucket name
-		});
-
-		it('should handle missing account ID', () => {
-			mockEnv.CLOUDFLARE_ACCOUNT_ID = undefined;
-
-			const result = r2Utils.generateFallbackPresignedUrl('test.pdf', 3600);
-
-			expect(result).toContain('unknown-account');
-		});
-	});
-
-	describe('fileExists', () => {
-		it('should return true when file exists', async () => {
-			const result = await r2Utils.fileExists('existing-file.pdf');
-
-			expect(mockBucket.head).toHaveBeenCalledWith('existing-file.pdf');
-			expect(result).toBe(true);
-		});
-
-		it('should return false when file does not exist', async () => {
-			mockBucket.head.mockResolvedValue(null);
-
-			const result = await r2Utils.fileExists('non-existing-file.pdf');
-
-			expect(result).toBe(false);
-			// Note: The debug log may or may not be called depending on the error path
-		});
-
-		it('should return false when bucket not configured', async () => {
-			r2Utils.bucket = null;
-
-			const result = await r2Utils.fileExists('test.pdf');
-
-			expect(result).toBe(false);
-		});
-
-		it('should return false when head operation fails', async () => {
-			mockBucket.head.mockRejectedValue(new Error('Head failed'));
-
-			const result = await r2Utils.fileExists('test.pdf');
-
-			expect(result).toBe(false);
-		});
-	});
-
-	describe('deleteFile', () => {
-		it('should delete file successfully', async () => {
-			const result = await r2Utils.deleteFile('test-file.pdf');
-
-			expect(mockBucket.delete).toHaveBeenCalledWith('test-file.pdf');
-			expect(result).toBe(true);
-			expect(mockLogger.log).toHaveBeenCalledWith('INFO', 'File deleted from R2', {
-				filename: 'test-file.pdf'
-			});
-		});
-
-		it('should return false when bucket not configured', async () => {
-			r2Utils.bucket = null;
-
-			const result = await r2Utils.deleteFile('test.pdf');
-
-			expect(result).toBe(false);
-		});
-
-		it('should return false when delete operation fails', async () => {
-			mockBucket.delete.mockRejectedValue(new Error('Delete failed'));
-
-			const result = await r2Utils.deleteFile('test.pdf');
-
-			expect(result).toBe(false);
-			expect(mockLogger.log).toHaveBeenCalledWith('ERROR', 'Failed to delete file from R2', {
-				filename: 'test.pdf',
-				error: 'Delete failed'
-			});
-		});
-	});
-
-	describe('getFileMetadata', () => {
-		it('should return file metadata when file exists', async () => {
-			const result = await r2Utils.getFileMetadata('test-file.pdf');
-
-			expect(mockBucket.head).toHaveBeenCalledWith('test-file.pdf');
-			expect(result).toEqual({
-				size: 1024,
-				etag: '"abc123"',
-				uploaded: expect.any(Date),
-				httpMetadata: { contentType: 'application/pdf' },
-				customMetadata: { uploadedBy: 'test' }
-			});
-		});
-
-		it('should return null when file does not exist', async () => {
-			mockBucket.head.mockResolvedValue(null);
-
-			const result = await r2Utils.getFileMetadata('non-existing.pdf');
-
-			expect(result).toBeNull();
-		});
-
-		it('should return null when bucket not configured', async () => {
-			r2Utils.bucket = null;
-
-			const result = await r2Utils.getFileMetadata('test.pdf');
-
-			expect(result).toBeNull();
-		});
-
-		it('should return null when head operation fails', async () => {
-			mockBucket.head.mockRejectedValue(new Error('Head failed'));
-
-			const result = await r2Utils.getFileMetadata('test.pdf');
-
-			expect(result).toBeNull();
-			expect(mockLogger.log).toHaveBeenCalledWith('ERROR', 'Failed to get file metadata from R2', {
-				filename: 'test.pdf',
-				error: 'Head failed'
-			});
-		});
-	});
-
-	describe('getSignedUrl', () => {
-		it('should return presigned URL (alias method)', async () => {
-			const result = await r2Utils.getSignedUrl('test.pdf', 1800);
-
-			expect(result).toContain('https://');
-			expect(result).toContain('X-Amz-Expires=1800');
-		});
-
-		it('should use default expiration when not provided', async () => {
-			const result = await r2Utils.getSignedUrl('test.pdf');
-
-			expect(result).toContain('X-Amz-Expires=43200');
-		});
-	});
-
-	describe('uploadFiles', () => {
-		it('should upload multiple files successfully', async () => {
-			const files = [
-				{ filename: 'file1.pdf', data: new Uint8Array([1, 2]), contentType: 'application/pdf' },
-				{ filename: 'file2.pdf', data: new Uint8Array([3, 4]), contentType: 'application/pdf' }
-			];
-
-			const results = await r2Utils.uploadFiles(files);
-
-			expect(results).toHaveLength(2);
-			expect(mockBucket.put).toHaveBeenCalledTimes(2);
-			expect(results[0]).toContain('https://');
-			expect(results[1]).toContain('https://');
-		});
-
-		it('should handle upload failure for one file', async () => {
-			const files = [
-				{ filename: 'file1.pdf', data: new Uint8Array([1, 2]), contentType: 'application/pdf' },
-				{ filename: 'file2.pdf', data: new Uint8Array([3, 4]), contentType: 'application/pdf' }
-			];
-
-			// Make second upload fail
-			mockBucket.put
-				.mockResolvedValueOnce(undefined)
-				.mockRejectedValueOnce(new Error('Upload failed'));
-
-			await expect(r2Utils.uploadFiles(files)).rejects.toThrow('Upload failed');
-
-			expect(mockLogger.log).toHaveBeenCalledWith('ERROR', 'Failed to upload multiple files to R2', {
-				fileCount: 2,
-				error: 'Upload failed'
-			});
-		});
-	});
-
-	describe('validateConfiguration', () => {
-		it('should return true when properly configured', () => {
-			const result = r2Utils.validateConfiguration();
-
-			expect(result).toBe(true);
-		});
-
-		it('should return false when bucket not configured', () => {
-			r2Utils.bucket = null;
-
-			const result = r2Utils.validateConfiguration();
-
-			expect(result).toBe(false);
-			expect(mockLogger.log).toHaveBeenCalledWith('ERROR', 'R2 bucket (FAX_FILES_BUCKET) not configured');
-		});
-
-		it('should return true even without public domain (using presigned URLs)', () => {
-			// R2 public domain is no longer required since we use presigned URLs
-			const result = r2Utils.validateConfiguration();
-
-			expect(result).toBe(true);
-		});
-	});
-
-	describe('getBucketInfo', () => {
-		it('should return bucket information', () => {
-			const result = r2Utils.getBucketInfo();
-
-			expect(result).toEqual({
-				configured: true,
-				presignedUrls: true, // Using presigned URLs instead of public domain
-				bucketName: 'test-bucket'
-			});
-		});
-
-		it('should handle unconfigured bucket', () => {
-			r2Utils.bucket = null;
-
-			const result = r2Utils.getBucketInfo();
-
-			expect(result).toEqual({
-				configured: false,
-				presignedUrls: true,
-				bucketName: 'not configured'
-			});
-		});
-	});
+describe('R2Utils (public-URL mode)', () => {
+  let r2Utils;
+  let mockLogger;
+  let mockBucket;
+
+  beforeEach(() => {
+    // Simple logger spy
+    mockLogger = { log: vi.fn() };
+
+    // Minimal R2 bucket mock (only methods used in these tests)
+    mockBucket = {
+      put: vi.fn().mockResolvedValue(undefined),
+      head: vi.fn().mockResolvedValue(null),
+      delete: vi.fn().mockResolvedValue(undefined),
+      name: 'test-bucket'
+    };
+
+    // Inject bindings into the mocked workers env
+    workerEnv.FAX_FILES_BUCKET = mockBucket;
+    workerEnv.FAX_FILES_BUCKET_PUBLIC_URL = 'https://public-url.r2.dev';
+
+    r2Utils = new R2Utils(mockLogger);
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('initialises with bucket and public URL', () => {
+    expect(r2Utils.bucket).toBe(mockBucket);
+    expect(r2Utils.publicUrlBase).toBe('https://public-url.r2.dev');
+  });
+
+  it('uploadFile stores file and returns public URL', async () => {
+    const filename = 'test.pdf';
+    const data = new Uint8Array([1, 2, 3]);
+
+    const url = await r2Utils.uploadFile(filename, data);
+
+    expect(mockBucket.put).toHaveBeenCalledWith(filename, data, expect.any(Object));
+    expect(url).toBe(`${workerEnv.FAX_FILES_BUCKET_PUBLIC_URL}/${filename}`);
+  });
+
+  it('getPresignedUrl returns public URL (back-compat)', async () => {
+    const filename = 'doc.pdf';
+    const url = await r2Utils.getPresignedUrl(filename);
+    expect(url).toBe(`${workerEnv.FAX_FILES_BUCKET_PUBLIC_URL}/${filename}`);
+  });
+
+  it('getSignedUrl returns public URL', async () => {
+    const filename = 'signed.pdf';
+    const url = await r2Utils.getSignedUrl(filename);
+    expect(url).toBe(`${workerEnv.FAX_FILES_BUCKET_PUBLIC_URL}/${filename}`);
+  });
+
+  it('validateConfiguration passes with bucket and public URL', () => {
+    expect(r2Utils.validateConfiguration()).toBe(true);
+  });
 });

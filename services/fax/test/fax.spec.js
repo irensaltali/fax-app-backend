@@ -38,10 +38,9 @@ vi.mock('cloudflare:workers', () => ({
 	}
 }));
 
-// Mock R2Utils
+// Mock R2Utils with the updated single-parameter constructor (logger only)
 vi.mock('../src/r2-utils.js', () => ({
-	R2Utils: vi.fn().mockImplementation((env, logger) => ({
-		env,
+	R2Utils: vi.fn().mockImplementation((logger) => ({
 		logger,
 		validateConfiguration: vi.fn().mockReturnValue(true),
 		uploadFile: vi.fn().mockResolvedValue('https://test.r2.url/file.pdf')
