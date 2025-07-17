@@ -1,0 +1,48 @@
+name = "env-test-service"
+main = "src/env-test.js"
+compatibility_date = "2025-07-04"
+compatibility_flags = ["nodejs_compat"]
+send_metrics = true
+minify = false
+workers_dev = false
+
+[observability]
+enabled = true
+
+# R2 bucket binding (reuse the same bucket names as fax service)
+[[r2_buckets]]
+binding = "FAX_FILES_BUCKET"
+bucket_name = "fax-files"
+preview_bucket_name = "fax-files-preview"
+
+[env.staging]
+name = "env-test-service-staging"
+
+[env.staging.observability]
+enabled = true
+
+[[env.staging.r2_buckets]]
+binding = "FAX_FILES_BUCKET"
+bucket_name = "fax-files-staging"
+preview_bucket_name = "fax-files-staging-preview"
+
+# Example variables for easier debugging in staging
+[env.staging.vars]
+LOG_LEVEL = "DEBUG"
+TEST_VARIABLE = "hello-from-staging"
+
+[env.prod]
+name = "env-test-service-prod"
+minify = true
+
+[env.prod.observability]
+enabled = true
+
+[[env.prod.r2_buckets]]
+binding = "FAX_FILES_BUCKET"
+bucket_name = "fax-files-prod"
+preview_bucket_name = "fax-files-prod-preview"
+
+[env.prod.vars]
+LOG_LEVEL = "INFO"
+TEST_VARIABLE = "hello-from-prod" 

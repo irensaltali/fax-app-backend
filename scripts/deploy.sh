@@ -25,6 +25,13 @@ run_service_tests() {
     echo -e "${YELLOW}No test script found in $service_name package.json, skipping tests${NC}"
     return 0
   fi
+
+  # Check if there are any test files present; if none, skip tests
+  local test_files_count=$(find "$service_path" -type f \( -name "*.spec.js" -o -name "*.test.js" -o -name "*.spec.ts" -o -name "*.test.ts" \) | wc -l | tr -d '[:space:]')
+  if [ "$test_files_count" -eq 0 ]; then
+    echo -e "${YELLOW}No test files found in $service_name, skipping tests${NC}"
+    return 0
+  fi
   
   # Run tests
   (cd "$service_path" && npm test -- --run)

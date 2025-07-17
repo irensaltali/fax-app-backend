@@ -18,6 +18,10 @@
         {
             "alias": "fax_service",
             "binding": "FAX_SERVICE"
+        },
+        {
+            "alias": "env_test_service",
+            "binding": "ENV_TEST_SERVICE"
         }
     ],
     "cors": {
@@ -92,6 +96,26 @@
                 "function": "healthProtected"
             },
             "auth": true
+        },
+        {
+            "method": "GET",
+            "path": "/v1/env-test/debug",
+            "integration": {
+                "type": "service_binding",
+                "binding": "env_test_service",
+                "function": "debug"
+            },
+            "auth": false
+        },
+        {
+            "method": "GET",
+            "path": "/v1/fax/debug",
+            "integration": {
+                "type": "service_binding",
+                "binding": "fax_service",
+                "function": "debug"
+            },
+            "auth": false
         }
     ]
 }

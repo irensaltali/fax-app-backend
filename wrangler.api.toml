@@ -12,6 +12,7 @@ kv_namespaces = [
 
 services = [
   { binding = "FAX_SERVICE", service = "fax-service" },
+  { binding = "ENV_TEST_SERVICE", service ="env-test-service" }
 ]
 
 [observability]
@@ -31,6 +32,7 @@ kv_namespaces = [
 
 services = [
   { binding = "FAX_SERVICE", service = "fax-service-staging" },
+  { binding = "ENV_TEST_SERVICE", service ="env-test-service-staging" }
 ]
 
 [env.staging.vars]
