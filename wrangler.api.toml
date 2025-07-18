@@ -38,6 +38,7 @@ services = [
 [env.staging.vars]
 SUPABASE_URL = "https://vqdpahsrwtaccjozuchj.supabase.co"
 LOG_LEVEL = "DEBUG"
+FAX_PROVIDER = "telynx"
 
 [env.prod]
 name = "magicqrlink"

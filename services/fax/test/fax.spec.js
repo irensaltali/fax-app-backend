@@ -54,34 +54,16 @@ vi.mock('../src/providers/telnyx-provider.js', () => ({
 		logger,
 		options,
 		getProviderName: () => 'telnyx',
-		validateConfig: () => true,
-		buildPayload: vi.fn().mockResolvedValue({
-			connection_id: 'test-connection-id',
-			to: '+1234567890',
-			from: '+1987654321'
-		}),
 		sendFaxWithCustomWorkflow: vi.fn().mockResolvedValue({
 			id: 'telnyx-fax-123',
-			status: 'pending',
-			originalStatus: 'queued',
+			friendlyId: 'TELNYX123',
+			status: 'queued',
+			originalStatus: 'Submitted',
 			message: 'Fax submitted to Telnyx successfully',
 			timestamp: new Date().toISOString(),
-			friendlyId: 'telnyx-fax-123',
 			providerResponse: {
 				id: 'telnyx-fax-123',
 				status: 'queued'
-			}
-		}),
-		getFaxStatus: vi.fn().mockResolvedValue({
-			id: 'telnyx-fax-123',
-			status: 'completed',
-			originalStatus: 'delivered',
-			message: 'Fax submitted to Telnyx successfully',
-			timestamp: new Date().toISOString(),
-			friendlyId: 'telnyx-fax-123',
-			providerResponse: {
-				id: 'telnyx-fax-123',
-				status: 'delivered'
 			}
 		})
 	}))
@@ -117,18 +99,6 @@ vi.mock('../src/providers/notifyre-provider.js', () => ({
 					friendlyID: 'TEST123'
 				},
 				success: true
-			}
-		}),
-		getFaxStatus: vi.fn().mockResolvedValue({
-			id: 'fax_123',
-			status: 'delivered',
-			originalStatus: 'Successful',
-			message: 'Fax delivered successfully',
-			timestamp: new Date().toISOString(),
-			friendlyId: 'fax_123',
-			providerResponse: {
-				id: 'fax_123',
-				status: 'Successful'
 			}
 		})
 	}))
@@ -373,17 +343,6 @@ describe('Fax Service', () => {
 	});
 
 
-
-	describe('getFaxStatus', () => {
-		it('should return fax status', async () => {
-			const request = new Request('https://api.sendfax.pro/v1/fax/status?id=fax_123', { method: 'GET' });
-			const result = await faxService.getFaxStatus(request, JSON.stringify(mockEnv), JSON.stringify(mockSagContext));
-			expect(result.statusCode).toBe(200);
-			expect(result.message).toBe('Status retrieved successfully');
-			expect(result.data.id).toBe('fax_123');
-			expect(result.data.status).toBe('delivered');
-		});
-	});
 
 	describe('Provider Selection', () => {
 		it('should default to Notifyre provider when FAX_PROVIDER not set', async () => {

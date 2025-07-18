@@ -5,15 +5,17 @@
  */
 
 import { env, WorkerEntrypoint } from "cloudflare:workers";
-import { Logger, FileUtils, ApiUtils, isValidFaxStatus } from './utils.js';
+import { Logger, FileUtils, ApiUtils } from './utils.js';
 import { DatabaseUtils } from './database.js';
-import { ProviderFactory } from './providers/provider-factory.js';
+import { NotifyreProvider } from './providers/notifyre-provider.js';
+import { TelnyxProvider } from './providers/telnyx-provider.js';
 import { R2Utils } from './r2-utils.js';
 
 export default class extends WorkerEntrypoint {
 	constructor(ctx, env) {
 		super(ctx, env);
 		this.logger = null;
+		this.env = env; // Store the service's own environment
 	}
 
 	async fetch(request, env) {
@@ -217,23 +219,27 @@ export default class extends WorkerEntrypoint {
 	}
 
 	/**
-	 * Create and configure fax API provider
-	 * @param {object} env - Environment variables
-	 * @returns {NotifyreProvider|TelnyxProvider} Configured provider instance
+	 * Back-compat overload: if only an env object is passed (legacy calls), treat it
+	 * as the old signature and derive the provider name from env.FAX_PROVIDER.
 	 */
-	async createFaxProvider(env) {
-		// Get API provider name from environment, default to 'notifyre'
-		const apiProviderName = env.FAX_PROVIDER || 'notifyre';
-		
-		// Get the appropriate API key and options based on the selected provider
+	async createFaxProvider(apiProviderName, env) {
+		// Handle legacy signature: createFaxProvider(env)
+		if (typeof apiProviderName === 'object' && apiProviderName !== null && !env) {
+			env = apiProviderName;
+			apiProviderName = env.FAX_PROVIDER || 'notifyre';
+		}
+
+		if (typeof apiProviderName !== 'string') {
+			throw new Error('Invalid API provider name');
+		}
+
 		let apiKey;
 		let options = {};
-		
+
 		switch (apiProviderName.toLowerCase()) {
 			case 'notifyre':
 				apiKey = env.NOTIFYRE_API_KEY;
 				break;
-				
 			case 'telnyx':
 				apiKey = env.TELNYX_API_KEY;
 				options = {
@@ -242,11 +248,6 @@ export default class extends WorkerEntrypoint {
 					env: env
 				};
 				break;
-				
-			// Add other API providers here as they're implemented
-			// case 'twilio':
-			//     apiKey = env.TWILIO_AUTH_TOKEN;
-			//     break;
 			default:
 				throw new Error(`Unsupported API provider: ${apiProviderName}`);
 		}
@@ -271,9 +272,25 @@ export default class extends WorkerEntrypoint {
 			hasOptions: Object.keys(options).length > 0
 		});
 
-		return ProviderFactory.createProvider(apiProviderName, apiKey, this.logger, options);
+		// Instantiate provider directly (factory removed)
+		if (apiProviderName.toLowerCase() === 'notifyre') {
+			return new NotifyreProvider(apiKey, this.logger);
+		}
+		if (apiProviderName.toLowerCase() === 'telnyx') {
+			return new TelnyxProvider(apiKey, this.logger, options);
+		}
+		throw new Error(`Unsupported API provider: ${apiProviderName}`);
 	}
 
+	/**
+	 * Normalises various inputs (case/typos) to canonical provider keys.
+	 */
+	normaliseProviderName(raw) {
+		if (!raw || typeof raw !== 'string') return null;
+		const name = raw.trim().toLowerCase();
+		if (name === 'telynx') return 'telnyx'; // common typo in wrangler file
+		return name;
+	}
 
 
 	/**
@@ -285,7 +302,6 @@ export default class extends WorkerEntrypoint {
 	async sendFax(request, caller_env, sagContext) {
 		try {
 			// Initialize environment and logger
-			this.env = JSON.parse(caller_env);
 			const context = JSON.parse(sagContext);
 			this.initializeLogger(this.env);
 
@@ -298,11 +314,30 @@ export default class extends WorkerEntrypoint {
 				authorization: request.headers.get('authorization') ? 'Bearer [REDACTED]' : 'none'
 			});
 
-			// Step 1: Create and validate fax provider client
-			const faxProvider = await this.createFaxProvider(this.env);
-
-			// Step 2: Parse request body  
+			// Step 1: Parse request body first to detect provider parameter
 			const requestBody = await this.parseRequestBody(request);
+
+			// Determine provider from query param or body; fallback to env
+			let apiProviderName = null;
+			const urlObj = new URL(request.url);
+			apiProviderName = urlObj.searchParams.get('provider');
+
+			if (!apiProviderName) {
+				if (requestBody instanceof FormData) {
+					apiProviderName = requestBody.get('provider') || requestBody.get('apiProvider');
+				} else if (typeof requestBody === 'object' && requestBody !== null) {
+					apiProviderName = requestBody.provider || requestBody.apiProvider;
+				}
+			}
+
+			if (!apiProviderName) {
+				apiProviderName = this.env.FAX_PROVIDER || 'notifyre';
+			}
+
+			apiProviderName = this.normaliseProviderName(apiProviderName) || 'notifyre';
+
+			// Step 2: Create and validate fax provider client
+			const faxProvider = await this.createFaxProvider(apiProviderName, this.env);
 
 			// Step 3: Prepare fax request from parsed body
 			const faxRequest = await this.prepareFaxRequest(requestBody);
@@ -415,72 +450,6 @@ export default class extends WorkerEntrypoint {
 	}
 
 	/**
-	 * Get fax status via Notifyre API
-	 * @param {Request} request - The incoming request
-	 * @param {string} caller_env - Stringified environment from caller
-	 * @param {string} sagContext - Stringified SAG context
-	 */
-	async getFaxStatus(request, caller_env, sagContext) {
-		try {
-			this.env = JSON.parse(caller_env);
-			const context = JSON.parse(sagContext);
-			this.initializeLogger(this.env);
-
-			this.logger.log('INFO', 'Get fax status request received');
-
-			// Create Notifyre API client instance
-			const notifyreClient = await this.createFaxProvider(this.env);
-
-			const url = new URL(request.url);
-			const faxId = url.searchParams.get('id');
-
-			if (!faxId) {
-				throw new Error('Fax ID is required');
-			}
-
-			this.logger.log('INFO', 'Checking fax status via Notifyre API', { 
-				faxId, 
-				apiProvider: notifyreClient.getProviderName() 
-			});
-
-			// Get fax status via Notifyre API
-			const notifyreStatusResult = await notifyreClient.getFaxStatus(faxId);
-
-			// Validate status is a known standard status
-			if (!isValidFaxStatus(notifyreStatusResult.status)) {
-				this.logger.log('WARN', 'Invalid status returned from Notifyre API', {
-					status: notifyreStatusResult.status,
-					apiProvider: notifyreClient.getProviderName()
-				});
-				// Don't throw error, just log warning
-			}
-
-			this.logger.log('INFO', 'Notifyre status retrieved successfully', { 
-				faxId, 
-				status: notifyreStatusResult.status,
-				apiProvider: notifyreClient.getProviderName()
-			});
-
-			return {
-				statusCode: 200,
-				message: "Status retrieved successfully",
-				data: {
-					...notifyreStatusResult,
-					apiProvider: notifyreClient.getProviderName()
-				}
-			};
-
-		} catch (error) {
-			this.logger.log('ERROR', 'Error in getFaxStatus:', error);
-			return {
-				statusCode: 500,
-				error: "Status check failed",
-				message: error.message
-			};
-		}
-	}
-
-	/**
 	 * debug()
 	 * Mirrors the Env-Test service debug handler to help troubleshoot
 	 * Serverless API Gateway context and environment propagation for the
@@ -495,7 +464,6 @@ export default class extends WorkerEntrypoint {
 		// Attempt to parse the incoming JSON strings – fall back to raw strings on failure.
 		let callerEnvObj;
 		let sagObj;
-		let envObj;
 
 		try {
 			callerEnvObj = JSON.parse(caller_env);
@@ -509,16 +477,10 @@ export default class extends WorkerEntrypoint {
 			sagObj = { parseError: err?.message || "Unable to parse sagContext", raw: sagContext };
 		}
 
-		try {
-			envObj = JSON.parse(env);
-		} catch (err) {
-			envObj = { parseError: err?.message || "Unable to parse env", raw: env };
-		}
-
 		// Log both structures for easier debugging in Cloudflare logs.
 		console.log("[FAX-SERVICE][DEBUG] Caller Environment:", callerEnvObj);
 		console.log("[FAX-SERVICE][DEBUG] SAG Context:", sagObj);
-		console.log("[FAX-SERVICE][DEBUG] Environment:", envObj);
+		console.log("[FAX-SERVICE][DEBUG] Service Environment:", this.env);
 
 		// Standard JSON response expected by the gateway → plain object is serialised.
 		return {
@@ -527,7 +489,7 @@ export default class extends WorkerEntrypoint {
 			data: {
 				callerEnvObj: callerEnvObj,
 				sagContext: sagObj,
-				env: envObj,
+				env: this.env,
 				timestamp: new Date().toISOString()
 			}
 		};
@@ -541,7 +503,6 @@ export default class extends WorkerEntrypoint {
 	 */
 	async health(request, caller_env, sagContext) {
 		try {
-			this.env = JSON.parse(caller_env);
 			this.initializeLogger(this.env);
 			this.logger.log('INFO', 'Health check request received');
 
@@ -556,7 +517,6 @@ export default class extends WorkerEntrypoint {
 					supportedApiProviders: ['notifyre'], // Will expand as more providers are added
 					features: [
 						"send-fax",
-						"get-status",
 						"webhooks",
 						"multi-api-provider-support"
 					]
@@ -585,12 +545,9 @@ export default class extends WorkerEntrypoint {
 	 */
 	async healthProtected(request, caller_env, sagContext) {
 		try {
-			this.env = JSON.parse(caller_env);
+			const context = JSON.parse(sagContext || '{}');
 			this.initializeLogger(this.env);
 			this.logger.log('INFO', 'Protected health check request received');
-
-			// Parse sagContext to extract user info if available
-			const context = JSON.parse(sagContext || '{}');
 
 			this.logger.log('INFO', 'Authenticated health check', { user: context.jwtPayload?.sub });
 
@@ -607,8 +564,7 @@ export default class extends WorkerEntrypoint {
 					supportedApiProviders: ['notifyre'], // Will expand as more providers are added
 					features: [
 						"send-fax",
-						"get-status",
-						"polling",
+						"webhooks",
 						"multi-api-provider-support"
 					]
 				}
@@ -641,7 +597,6 @@ export default class extends WorkerEntrypoint {
 	async uploadFilesToR2(request, caller_env, sagContext) {
 		try {
 			// Parse and initialise runtime context
-			this.env = JSON.parse(caller_env || "{}");
 			this.initializeLogger(this.env);
 
 			this.logger.log('INFO', 'Upload-to-R2 debug endpoint called', {
@@ -749,7 +704,7 @@ export default class extends WorkerEntrypoint {
 				sentAt: new Date().toISOString(),
 				completedAt: null,
 				errorMessage: null,
-				provider_response: faxResult.providerResponse,
+				providerResponse: faxResult.providerResponse,
 				friendlyId: faxResult.friendlyId,
 				apiProvider: providerName
 			};

@@ -4,13 +4,13 @@
  * Special workflow: Save to Supabase → Upload to R2 → Send to Telnyx using R2 public URL
  */
 
-import { BaseFaxProvider } from './base-provider.js';
 import { FileUtils } from '../utils.js';
 import { DatabaseUtils } from '../database.js';
 
-export class TelnyxProvider extends BaseFaxProvider {
+export class TelnyxProvider {
 	constructor(apiKey, logger, options = {}) {
-		super(apiKey, logger);
+		this.apiKey = apiKey;
+		this.logger = logger;
 		this.baseUrl = 'https://api.telnyx.com';
 		this.connectionId = options.connectionId;
 		this.r2Utils = options.r2Utils;
@@ -253,8 +253,8 @@ export class TelnyxProvider extends BaseFaxProvider {
 	async updateFaxRecordWithTelnyxResponse(faxId, telnyxResponse) {
 		const updateData = {
 			telnyx_fax_id: telnyxResponse.id,
-			status: this.mapStatus(telnyxResponse.status),
 			telnyx_response: telnyxResponse,
+			status: this.mapStatus(telnyxResponse.status),
 			sent_at: new Date().toISOString(),
 			updated_at: new Date().toISOString()
 		};
@@ -271,36 +271,6 @@ export class TelnyxProvider extends BaseFaxProvider {
 		// This method is kept for interface compliance but shouldn't be used directly
 		// Use sendFaxWithCustomWorkflow instead
 		throw new Error('Use sendFaxWithCustomWorkflow method for Telnyx provider');
-	}
-
-	/**
-	 * Get fax status via Telnyx API
-	 * @param {string} faxId - Telnyx fax ID
-	 * @returns {object} Standardized status response
-	 */
-	async getFaxStatus(faxId) {
-		this.logger.log('DEBUG', 'Getting fax status from Telnyx', { faxId });
-
-		const response = await fetch(`${this.baseUrl}/v2/faxes/${faxId}`, {
-			method: 'GET',
-			headers: {
-				'Authorization': `Bearer ${this.apiKey}`,
-				'Content-Type': 'application/json'
-			}
-		});
-
-		if (!response.ok) {
-			const errorText = await response.text();
-			this.logger.log('ERROR', 'Telnyx status check failed', {
-				faxId,
-				status: response.status,
-				error: errorText
-			});
-			throw new Error(`Telnyx status check error: ${response.status} - ${errorText}`);
-		}
-
-		const responseData = await response.json();
-		return this.mapTelnyxResponse(responseData.data);
 	}
 
 	/**

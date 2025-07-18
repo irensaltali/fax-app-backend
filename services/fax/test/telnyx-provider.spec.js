@@ -471,60 +471,6 @@ describe('TelnyxProvider', () => {
 		});
 	});
 
-	describe('getFaxStatus', () => {
-		it('should get fax status from Telnyx API', async () => {
-			global.fetch.mockResolvedValue({
-				ok: true,
-				json: () => Promise.resolve({
-					data: {
-						id: 'telnyx-fax-123',
-						status: 'delivered'
-					}
-				})
-			});
-
-			const result = await telnyxProvider.getFaxStatus('telnyx-fax-123');
-
-			expect(global.fetch).toHaveBeenCalledWith(
-				'https://api.telnyx.com/v2/faxes/telnyx-fax-123',
-				{
-					method: 'GET',
-					headers: {
-						'Authorization': 'Bearer test-api-key',
-						'Content-Type': 'application/json'
-					}
-				}
-			);
-
-			expect(result).toEqual({
-				id: 'telnyx-fax-123',
-				status: 'completed',
-				originalStatus: 'delivered',
-				message: 'Fax submitted to Telnyx successfully',
-				timestamp: expect.any(String),
-				friendlyId: 'telnyx-fax-123',
-				providerResponse: expect.any(Object)
-			});
-		});
-
-		it('should handle status check failures', async () => {
-			global.fetch.mockResolvedValue({
-				ok: false,
-				status: 404,
-				text: () => Promise.resolve('Fax not found')
-			});
-
-			await expect(telnyxProvider.getFaxStatus('invalid-fax-id'))
-				.rejects.toThrow('Telnyx status check error: 404 - Fax not found');
-
-			expect(mockLogger.log).toHaveBeenCalledWith('ERROR', 'Telnyx status check failed', {
-				faxId: 'invalid-fax-id',
-				status: 404,
-				error: 'Fax not found'
-			});
-		});
-	});
-
 	describe('mapStatus', () => {
 		it('should map Telnyx statuses to standard statuses', () => {
 			expect(telnyxProvider.mapStatus('queued')).toBe('pending');

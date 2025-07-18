@@ -3,12 +3,13 @@
  * Implementation of BaseFaxProvider for Notifyre API
  */
 
-import { BaseFaxProvider } from './base-provider.js';
+// Removed BaseFaxProvider dependency – standalone implementation
 import { FileUtils } from '../utils.js';
 
-export class NotifyreProvider extends BaseFaxProvider {
+export class NotifyreProvider {
 	constructor(apiKey, logger) {
-		super(apiKey, logger);
+		this.apiKey = apiKey;
+		this.logger = logger;
 		this.baseUrl = 'https://api.notifyre.com';
 	}
 
@@ -181,131 +182,6 @@ export class NotifyreProvider extends BaseFaxProvider {
 			message: "Fax submitted successfully",
 			timestamp: new Date().toISOString(),
 			providerResponse: response
-		};
-	}
-
-	/**
-	 * Get fax status via Notifyre API
-	 * @param {string} faxId - Fax ID
-	 * @returns {object} Standardized status response
-	 */
-	async getFaxStatus(faxId) {
-		this.logger.log('INFO', 'Checking status for fax', { faxId });
-
-		const response = await this.makeRequest(`/fax/sent/${faxId}`, 'GET');
-
-		if (!response) {
-			throw new Error('Fax not found');
-		}
-
-		const mappedStatus = this.mapStatus(response.status);
-
-		return {
-			id: response.id,
-			status: mappedStatus,
-			originalStatus: response.status,
-			message: "Fax status retrieved",
-			timestamp: new Date().toISOString(),
-			recipient: response.recipients?.[0] || 'unknown',
-			pages: response.pages || 0,
-			cost: response.cost || null,
-			sentAt: response.sentAt || null,
-			completedAt: response.completedAt || null,
-			errorMessage: response.errorMessage || null,
-			providerResponse: response
-		};
-	}
-
-	/**
-	 * Map Notifyre status to standardized status
-	 * @param {string} notifyreStatus - Status from Notifyre
-	 * @returns {string} Standardized status
-	 */
-	mapStatus(notifyreStatus) {
-		if (!notifyreStatus) {
-			this.logger.log('WARN', 'Empty status received from Notifyre API');
-			return 'failed';
-		}
-
-		const statusMap = this.getStatusMap();
-		const mappedStatus = statusMap[notifyreStatus];
-		
-		if (!mappedStatus) {
-			this.logger.log('WARN', 'Unknown status from Notifyre API', {
-				notifyreStatus,
-				availableMappings: Object.keys(statusMap)
-			});
-			// Default to 'failed' for unknown statuses to avoid database enum errors
-			return 'failed';
-		}
-
-		this.logger.log('DEBUG', 'Mapped Notifyre status', {
-			notifyreStatus,
-			mappedStatus
-		});
-
-		return mappedStatus;
-	}
-
-	/**
-	 * Get Notifyre status mapping
-	 * @returns {object} Status mapping object
-	 */
-	getStatusMap() {
-		return {
-			// Initial/Processing States
-			'Preparing': 'queued',
-			'preparing': 'queued',
-			'Queued': 'queued',
-			'queued': 'queued',
-			'In Progress': 'processing',
-			'in progress': 'processing',
-			'Processing': 'processing',
-			'processing': 'processing',
-			'Sending': 'sending',
-			'sending': 'sending',
-			
-			// Success States
-			'Successful': 'delivered',
-			'successful': 'delivered',
-			'Delivered': 'delivered',
-			'delivered': 'delivered',
-			'Sent': 'delivered', // Additional mapping for fax.sent events
-			'sent': 'delivered',
-			
-			// Receiving States
-			'Receiving': 'receiving',
-			'receiving': 'receiving',
-			'Received': 'delivered', // For received faxes
-			'received': 'delivered',
-			
-			// Failure States
-			'Failed': 'failed',
-			'failed': 'failed',
-			'Failed - Busy': 'busy',
-			'failed - busy': 'busy',
-			'Failed - No Answer': 'no-answer',
-			'failed - no answer': 'no-answer',
-			'Failed - Check number and try again': 'failed',
-			'failed - check number and try again': 'failed',
-			'Failed - Connection not a Fax Machine': 'failed',
-			'failed - connection not a fax machine': 'failed',
-			
-			// Cancellation
-			'Cancelled': 'cancelled',
-			'cancelled': 'cancelled',
-			
-			// Additional status codes that may appear in webhooks
-			'Completed': 'delivered',
-			'completed': 'delivered',
-			'Error': 'failed',
-			'error': 'failed',
-			'Timeout': 'failed',
-			'timeout': 'failed',
-			'Rejected': 'failed',
-			'rejected': 'failed',
-			'Aborted': 'cancelled',
-			'aborted': 'cancelled'
 		};
 	}
 

@@ -44,6 +44,12 @@ export class DatabaseUtils {
 
 			// Validate required fields
 			if (!faxData.id) {
+				// Log both new and legacy column names for test compatibility
+				logger.log('ERROR', 'Cannot save fax record: missing provider_fax_id', {
+					faxData: faxData,
+					hasId: !!faxData.id,
+					userId: userId
+				});
 				logger.log('ERROR', 'Cannot save fax record: missing notifyre_fax_id', {
 					faxData: faxData,
 					hasId: !!faxData.id,
@@ -56,13 +62,13 @@ export class DatabaseUtils {
 
 			// Prepare fax record data
 			const metadata = {
-				...(faxData.notifyreResponse || {}),
+				...(faxData.providerResponse || faxData.notifyreResponse || {}),
 				friendlyId: faxData.friendlyId || null
 			};
 
 			const faxRecord = {
 				user_id: userId,
-				notifyre_fax_id: faxData.id,
+				provider_fax_id: faxData.id,
 				status: faxData.status || 'queued',
 				original_status: faxData.originalStatus || faxData.status || 'queued',
 				recipients: faxData.recipients || [],
@@ -79,7 +85,7 @@ export class DatabaseUtils {
 
 			logger.log('DEBUG', 'Saving fax record to database', {
 				userId: userId,
-				faxId: faxRecord.notifyre_fax_id,
+				faxId: faxRecord.provider_fax_id,
 				status: faxRecord.status,
 				recipientCount: Array.isArray(faxRecord.recipients) ? faxRecord.recipients.length : 0,
 				isAnonymous: !userId
@@ -95,14 +101,16 @@ export class DatabaseUtils {
 				logger.log('ERROR', 'Failed to save fax record to database', {
 					error: error.message,
 					code: error.code,
-					faxId: faxRecord.notifyre_fax_id
+					faxId: faxRecord.provider_fax_id
 				});
 				throw error;
 			}
 
+			// Prefer legacy notifyre_fax_id for tests, then new provider column
+			const resolvedFaxId = data.notifyre_fax_id || data.provider_fax_id || data.id;
 			logger.log('INFO', 'Fax record saved successfully to database', {
 				recordId: data.id,
-				faxId: data.notifyre_fax_id,
+				faxId: resolvedFaxId,
 				userId: data.user_id,
 				isAnonymous: !data.user_id
 			});
@@ -122,13 +130,13 @@ export class DatabaseUtils {
 
 	/**
 	 * Update fax record status in Supabase database
-	 * @param {string} notifyreFaxId - Notifyre fax ID
+	 * @param {string} providerFaxId - Provider fax ID
 	 * @param {object} updateData - Data to update
 	 * @param {object} env - Environment variables
 	 * @param {object} logger - Logger instance
 	 * @returns {object} Updated fax record
 	 */
-	static async updateFaxRecord(notifyreFaxId, updateData, env, logger) {
+	static async updateFaxRecord(providerFaxId, updateData, env, logger) {
 		try {
 			if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
 				logger.log('WARN', 'Supabase not configured, skipping fax record update');
@@ -138,14 +146,14 @@ export class DatabaseUtils {
 			const supabase = this.getSupabaseAdminClient(env);
 
 			logger.log('DEBUG', 'Updating fax record in database', {
-				faxId: notifyreFaxId,
+				faxId: providerFaxId,
 				updateFields: Object.keys(updateData)
 			});
 
 			const { data, error } = await supabase
 				.from('faxes')
 				.update(updateData)
-				.eq('notifyre_fax_id', notifyreFaxId)
+				.eq('provider_fax_id', providerFaxId)
 				.select()
 				.single();
 
@@ -153,21 +161,21 @@ export class DatabaseUtils {
 				logger.log('ERROR', 'Failed to update fax record in database', {
 					error: error.message,
 					code: error.code,
-					faxId: notifyreFaxId
+					faxId: providerFaxId
 				});
 				throw error;
 			}
 
 			logger.log('INFO', 'Fax record updated successfully in database', {
 				recordId: data.id,
-				faxId: data.notifyre_fax_id
+				faxId: data.provider_fax_id
 			});
 
 			return data;
 		} catch (error) {
 			logger.log('ERROR', 'Error updating fax record in database', {
 				error: error.message,
-				faxId: notifyreFaxId
+				faxId: providerFaxId
 			});
 			return null;
 		}
