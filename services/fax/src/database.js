@@ -4,16 +4,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 
-/**
- * Database utilities
- */
 export class DatabaseUtils {
-	/**
-	 * Get Supabase admin client with service role key (bypasses RLS)
-	 * Always use service role for backend operations
-	 * @param {object} env - Environment variables
-	 * @returns {SupabaseClient}
-	 */
 	static getSupabaseAdminClient(env) {
 		if (!env.SUPABASE_SERVICE_ROLE_KEY) {
 			throw new Error('SUPABASE_SERVICE_ROLE_KEY is required for backend operations');
@@ -24,17 +15,8 @@ export class DatabaseUtils {
 		return createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
 	}
 
-	/**
-	 * Save fax record to Supabase database
-	 * @param {object} faxData - Fax data to save
-	 * @param {string|null} userId - User ID from auth context (null for anonymous users)
-	 * @param {object} env - Environment variables
-	 * @param {object} logger - Logger instance
-	 * @returns {object} Saved fax record
-	 */
 	static async saveFaxRecord(faxData, userId, env, logger) {
 		try {
-			// Debug environment variables
 			logger.log('DEBUG', 'Supabase environment check', {
 				hasUrl: !!env.SUPABASE_URL,
 				hasServiceRoleKey: !!env.SUPABASE_SERVICE_ROLE_KEY,
@@ -42,9 +24,7 @@ export class DatabaseUtils {
 				urlPrefix: env.SUPABASE_URL ? env.SUPABASE_URL.substring(0, 30) + '...' : 'none'
 			});
 
-			// Validate required fields
 			if (!faxData.id) {
-				// Log both new and legacy column names for test compatibility
 				logger.log('ERROR', 'Cannot save fax record: missing provider_fax_id', {
 					faxData: faxData,
 					hasId: !!faxData.id,
@@ -60,7 +40,6 @@ export class DatabaseUtils {
 
 			const supabase = this.getSupabaseAdminClient(env);
 
-			// Prepare fax record data
 			const metadata = {
 				...(faxData.providerResponse || faxData.notifyreResponse || {}),
 				friendlyId: faxData.friendlyId || null
@@ -106,7 +85,6 @@ export class DatabaseUtils {
 				throw error;
 			}
 
-			// Prefer legacy notifyre_fax_id for tests, then new provider column
 			const resolvedFaxId = data.notifyre_fax_id || data.provider_fax_id || data.id;
 			logger.log('INFO', 'Fax record saved successfully to database', {
 				recordId: data.id,
@@ -123,20 +101,11 @@ export class DatabaseUtils {
 				userId: userId,
 				isAnonymous: !userId
 			});
-			// Don't throw error - we don't want to fail the entire fax operation if database save fails
 			return null;
 		}
 	}
 
-	/**
-	 * Update fax record status in Supabase database
-	 * @param {string} providerFaxId - Provider fax ID
-	 * @param {object} updateData - Data to update
-	 * @param {object} env - Environment variables
-	 * @param {object} logger - Logger instance
-	 * @returns {object} Updated fax record
-	 */
-	static async updateFaxRecord(providerFaxId, updateData, env, logger) {
+	static async updateFaxRecord(faxId, updateData, env, logger, idType = 'provider_fax_id') {
 		try {
 			if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
 				logger.log('WARN', 'Supabase not configured, skipping fax record update');
@@ -146,14 +115,20 @@ export class DatabaseUtils {
 			const supabase = this.getSupabaseAdminClient(env);
 
 			logger.log('DEBUG', 'Updating fax record in database', {
-				faxId: providerFaxId,
+				faxId,
+				idType,
 				updateFields: Object.keys(updateData)
 			});
 
+			const dataToUpdate = {
+				...updateData,
+				updated_at: new Date().toISOString()
+			};
+
 			const { data, error } = await supabase
 				.from('faxes')
-				.update(updateData)
-				.eq('provider_fax_id', providerFaxId)
+				.update(dataToUpdate)
+				.eq(idType, faxId)
 				.select()
 				.single();
 
@@ -161,34 +136,38 @@ export class DatabaseUtils {
 				logger.log('ERROR', 'Failed to update fax record in database', {
 					error: error.message,
 					code: error.code,
-					faxId: providerFaxId
+					faxId,
+					idType
 				});
-				throw error;
+				return null;
+			}
+
+			if (!data) {
+				logger.log('WARN', 'Fax record not found in database, skipping update', {
+					faxId,
+					idType,
+					message: 'This fax may not have been sent through our system'
+				});
+				return null;
 			}
 
 			logger.log('INFO', 'Fax record updated successfully in database', {
 				recordId: data.id,
-				faxId: data.provider_fax_id
+				faxId: data.provider_fax_id || data.notifyre_fax_id || data.id,
+				idType
 			});
 
 			return data;
 		} catch (error) {
 			logger.log('ERROR', 'Error updating fax record in database', {
 				error: error.message,
-				faxId: providerFaxId
+				faxId,
+				idType
 			});
 			return null;
 		}
 	}
 
-	/**
-	 * List user's fax records from database
-	 * @param {string} userId - User ID to filter by
-	 * @param {object} options - Query options (limit, offset, status, fromDate, toDate)
-	 * @param {object} env - Environment variables
-	 * @param {object} logger - Logger instance
-	 * @returns {object} Query result with faxes and metadata
-	 */
 	static async listUserFaxes(userId, options, env, logger) {
 		try {
 			if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -202,7 +181,6 @@ export class DatabaseUtils {
 			const { limit = 50, offset = 0, status, fromDate, toDate } = options;
 			const supabase = this.getSupabaseAdminClient(env);
 
-			// Build query
 			let query = supabase
 				.from('faxes')
 				.select('*')
@@ -210,7 +188,6 @@ export class DatabaseUtils {
 				.order('created_at', { ascending: false })
 				.range(offset, offset + limit - 1);
 
-			// Add filters
 			if (status) {
 				query = query.eq('status', status);
 			}
@@ -257,68 +234,6 @@ export class DatabaseUtils {
 		}
 	}
 
-	/**
-	 * Update fax record in Supabase database
-	 * @param {string} faxId - Fax ID to update
-	 * @param {object} updateData - Data to update
-	 * @param {object} env - Environment variables
-	 * @param {object} logger - Logger instance
-	 * @returns {object} Updated fax record
-	 */
-	static async updateFaxRecord(faxId, updateData, env, logger) {
-		try {
-			if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
-				logger.log('WARN', 'Supabase not configured, skipping fax record update');
-				return null;
-			}
-
-			const supabase = this.getSupabaseAdminClient(env);
-
-			logger.log('DEBUG', 'Updating fax record in database', {
-				faxId,
-				updateFields: Object.keys(updateData)
-			});
-
-			const { data, error } = await supabase
-				.from('faxes')
-				.update(updateData)
-				.eq('id', faxId)
-				.select()
-				.single();
-
-			if (error) {
-				logger.log('ERROR', 'Failed to update fax record in database', {
-					error: error.message,
-					code: error.code,
-					faxId
-				});
-				return null;
-			}
-
-			logger.log('INFO', 'Fax record updated successfully in database', {
-				recordId: data.id,
-				faxId
-			});
-
-			return data;
-
-		} catch (error) {
-			logger.log('ERROR', 'Error updating fax record', {
-				faxId,
-				error: error.message,
-				stack: error.stack
-			});
-			throw error;
-		}
-	}
-
-	/**
-	 * Store webhook event for audit trail
-	 * @param {object} webhookData - Webhook event data
-	 * @param {object} env - Environment variables
-	 * @param {object} logger - Logger instance
-	 * @returns {object} Stored webhook record
-	 */
 	static async storeWebhookEvent(webhookData, env, logger) {
 		try {
 			const supabase = this.getSupabaseAdminClient(env);

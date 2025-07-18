@@ -54,6 +54,23 @@ vi.mock('../src/providers/telnyx-provider.js', () => ({
 		logger,
 		options,
 		getProviderName: () => 'telnyx',
+		prepareFaxRequest: vi.fn().mockImplementation(async (requestBody) => {
+			if (requestBody && typeof requestBody === 'object' && requestBody !== null) {
+				return {
+					recipients: requestBody.recipients || (requestBody.recipient ? [requestBody.recipient] : ['+1234567890']),
+					senderId: requestBody.senderId || '',
+					message: requestBody.message || 'Test fax',
+					files: requestBody.files || []
+				};
+			}
+			// Return empty recipients for null/empty request body
+			return {
+				recipients: [],
+				senderId: '',
+				message: 'Test fax',
+				files: []
+			};
+		}),
 		sendFaxWithCustomWorkflow: vi.fn().mockResolvedValue({
 			id: 'telnyx-fax-123',
 			friendlyId: 'TELNYX123',
@@ -75,6 +92,23 @@ vi.mock('../src/providers/notifyre-provider.js', () => ({
 		apiKey,
 		logger,
 		getProviderName: () => 'notifyre',
+		prepareFaxRequest: vi.fn().mockImplementation(async (requestBody) => {
+			if (requestBody && typeof requestBody === 'object' && requestBody !== null) {
+				return {
+					recipients: requestBody.recipients || (requestBody.recipient ? [requestBody.recipient] : ['+1234567890']),
+					senderId: requestBody.senderId || '',
+					message: requestBody.message || 'Test fax',
+					files: requestBody.files || []
+				};
+			}
+			// Return empty recipients for null/empty request body
+			return {
+				recipients: [],
+				senderId: '',
+				message: 'Test fax',
+				files: []
+			};
+		}),
 		buildPayload: vi.fn().mockResolvedValue({
 			Faxes: {
 				Recipients: [{ Type: 'fax_number', Value: '+1234567890' }],
@@ -349,14 +383,14 @@ describe('Fax Service', () => {
 			const envWithoutProvider = { ...mockEnv };
 			delete envWithoutProvider.FAX_PROVIDER;
 			
-			const provider = await faxService.createFaxProvider(envWithoutProvider);
+			const provider = await faxService.createFaxProvider('notifyre', envWithoutProvider);
 			expect(provider.getProviderName()).toBe('notifyre');
 		});
 
 		it('should use Notifyre provider when FAX_PROVIDER=notifyre', async () => {
 			const envWithNotifyre = { ...mockEnv, FAX_PROVIDER: 'notifyre' };
 			
-			const provider = await faxService.createFaxProvider(envWithNotifyre);
+			const provider = await faxService.createFaxProvider('notifyre', envWithNotifyre);
 			expect(provider.getProviderName()).toBe('notifyre');
 		});
 
@@ -370,21 +404,25 @@ describe('Fax Service', () => {
 				CLOUDFLARE_ACCOUNT_ID: 'test-account-id'
 			};
 			
-			const provider = await faxService.createFaxProvider(envWithTelnyx);
+			const provider = await faxService.createFaxProvider('telnyx', envWithTelnyx);
 			expect(provider.getProviderName()).toBe('telnyx');
 		});
 
 		it('should throw error for unsupported provider', async () => {
 			const envWithUnsupported = { ...mockEnv, FAX_PROVIDER: 'unsupported' };
 			
-			await expect(faxService.createFaxProvider(envWithUnsupported))
+			await expect(faxService.createFaxProvider('unsupported', envWithUnsupported))
 				.rejects.toThrow('Unsupported API provider: unsupported');
 		});
 
 		it('should throw error when Telnyx API key missing', async () => {
-			const envWithoutKey = { ...mockEnv, FAX_PROVIDER: 'telnyx' };
+			const envWithoutKey = { 
+				...mockEnv, 
+				FAX_PROVIDER: 'telnyx',
+				TELNYX_CONNECTION_ID: 'test-connection-id'
+			};
 			
-			await expect(faxService.createFaxProvider(envWithoutKey))
+			await expect(faxService.createFaxProvider('telnyx', envWithoutKey))
 				.rejects.toThrow('API key not found for telnyx provider');
 		});
 
@@ -395,7 +433,7 @@ describe('Fax Service', () => {
 				TELNYX_API_KEY: 'test-key'
 			};
 			
-			await expect(faxService.createFaxProvider(envWithoutConnectionId))
+			await expect(faxService.createFaxProvider('telnyx', envWithoutConnectionId))
 				.rejects.toThrow('TELNYX_CONNECTION_ID is required for Telnyx provider');
 		});
 	});
@@ -403,19 +441,19 @@ describe('Fax Service', () => {
 	describe('health handlers', () => {
 		it('should return healthy status (unauthenticated)', async () => {
 			const request = new Request('https://api.sendfax.pro/v1/fax/health', { method: 'GET' });
-			const result = await faxService.health(request, JSON.stringify(mockEnv), JSON.stringify(mockSagContext));
+			const result = await faxService.health(request, mockEnv, mockSagContext);
 			expect(result.statusCode).toBe(200);
-			expect(result.message).toBe('Notifyre Fax service healthy');
-			expect(result.data.service).toBe('notifyre-fax');
+			expect(result.message).toBe('Fax service healthy');
+			expect(result.data.service).toBe('fax');
 			expect(result.data.version).toBe('2.0.0');
 		});
 
 		it('should return healthy status with user info (authenticated)', async () => {
 			const request = new Request('https://api.sendfax.pro/v1/fax/health/protected', { method: 'GET' });
-			const result = await faxService.healthProtected(request, JSON.stringify(mockEnv), JSON.stringify(mockSagContext));
+			const result = await faxService.healthProtected(request, mockEnv, mockSagContext);
 			expect(result.statusCode).toBe(200);
-			expect(result.message).toBe('Notifyre Fax service healthy (authenticated)');
-			expect(result.data.service).toBe('notifyre-fax');
+			expect(result.message).toBe('Fax service healthy (authenticated)');
+			expect(result.data.service).toBe('fax');
 			expect(result.data.user.sub).toBe('test-user-123');
 			expect(result.data.version).toBe('2.0.0');
 		});

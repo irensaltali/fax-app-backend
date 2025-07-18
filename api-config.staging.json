@@ -116,6 +116,16 @@
                 "function": "uploadFilesToR2"
             },
             "auth": false
+        },
+        {
+            "method": "POST",
+            "path": "/v1/fax/webhook/telnyx",
+            "integration": {
+                "type": "service_binding",
+                "binding": "fax_service",
+                "function": "telnyxWebhook"
+            },
+            "auth": false
         }
     ]
 }

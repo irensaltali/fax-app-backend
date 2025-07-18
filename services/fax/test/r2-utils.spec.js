@@ -13,6 +13,7 @@ describe('R2Utils (public-URL mode)', () => {
   let r2Utils;
   let mockLogger;
   let mockBucket;
+  let mockEnv;
 
   beforeEach(() => {
     // Simple logger spy
@@ -26,11 +27,14 @@ describe('R2Utils (public-URL mode)', () => {
       name: 'test-bucket'
     };
 
-    // Inject bindings into the mocked workers env
-    workerEnv.FAX_FILES_BUCKET = mockBucket;
-    workerEnv.FAX_FILES_BUCKET_PUBLIC_URL = 'https://public-url.r2.dev';
+    // Create mock environment object
+    mockEnv = {
+      FAX_FILES_BUCKET: mockBucket,
+      FAX_FILES_BUCKET_PUBLIC_URL: 'https://public-url.r2.dev'
+    };
 
-    r2Utils = new R2Utils(mockLogger);
+    // Create R2Utils instance with mock environment
+    r2Utils = new R2Utils(mockLogger, mockEnv);
   });
 
   afterEach(() => {
@@ -49,19 +53,19 @@ describe('R2Utils (public-URL mode)', () => {
     const url = await r2Utils.uploadFile(filename, data);
 
     expect(mockBucket.put).toHaveBeenCalledWith(filename, data, expect.any(Object));
-    expect(url).toBe(`${workerEnv.FAX_FILES_BUCKET_PUBLIC_URL}/${filename}`);
+    expect(url).toBe(`${mockEnv.FAX_FILES_BUCKET_PUBLIC_URL}/${filename}`);
   });
 
   it('getPresignedUrl returns public URL (back-compat)', async () => {
     const filename = 'doc.pdf';
     const url = await r2Utils.getPresignedUrl(filename);
-    expect(url).toBe(`${workerEnv.FAX_FILES_BUCKET_PUBLIC_URL}/${filename}`);
+    expect(url).toBe(`${mockEnv.FAX_FILES_BUCKET_PUBLIC_URL}/${filename}`);
   });
 
   it('getSignedUrl returns public URL', async () => {
     const filename = 'signed.pdf';
     const url = await r2Utils.getSignedUrl(filename);
-    expect(url).toBe(`${workerEnv.FAX_FILES_BUCKET_PUBLIC_URL}/${filename}`);
+    expect(url).toBe(`${mockEnv.FAX_FILES_BUCKET_PUBLIC_URL}/${filename}`);
   });
 
   it('validateConfiguration passes with bucket and public URL', () => {

@@ -281,11 +281,13 @@ describe('DatabaseUtils', () => {
 			expect(result).toEqual(updatedRecord);
 			expect(mockLogger.log).toHaveBeenCalledWith('DEBUG', 'Updating fax record in database', {
 				faxId: 'fax_123',
+				idType: 'provider_fax_id',
 				updateFields: Object.keys(updateData)
 			});
 			expect(mockLogger.log).toHaveBeenCalledWith('INFO', 'Fax record updated successfully in database', {
 				recordId: 'db_123',
-				faxId: 'fax_123'
+				faxId: 'fax_123',
+				idType: 'provider_fax_id'
 			});
 		});
 
@@ -318,7 +320,8 @@ describe('DatabaseUtils', () => {
 			expect(mockLogger.log).toHaveBeenCalledWith('ERROR', 'Failed to update fax record in database', {
 				error: 'Record not found',
 				code: '23503',
-				faxId: 'fax_123'
+				faxId: 'fax_123',
+				idType: 'provider_fax_id'
 			});
 		});
 	});

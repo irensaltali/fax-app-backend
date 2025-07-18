@@ -13,12 +13,92 @@ export class TelnyxProvider {
 		this.logger = logger;
 		this.baseUrl = 'https://api.telnyx.com';
 		this.connectionId = options.connectionId;
+		this.senderId = options.senderId;
 		this.r2Utils = options.r2Utils;
 		this.env = options.env;
 	}
 
 	getProviderName() {
 		return 'telnyx';
+	}
+
+	async prepareFaxRequest(requestBody) {
+		this.logger.log('DEBUG', 'Starting fax request preparation for Telnyx');
+		let faxRequest = {};
+
+		if (requestBody instanceof FormData) {
+			for (const [key, value] of requestBody.entries()) {
+				if (key === 'recipients[]') {
+					if (!faxRequest.recipients) faxRequest.recipients = [];
+					faxRequest.recipients.push(value);
+				} else if (key === 'files[]') {
+					if (!faxRequest.files) faxRequest.files = [];
+					faxRequest.files.push(value);
+				} else {
+					faxRequest[key] = value;
+				}
+			}
+		} else if (typeof requestBody === 'object' && requestBody !== null) {
+			const {
+				recipient,
+				recipients,
+				message,
+				coverPage,
+				files,
+				senderId,
+				...otherFields
+			} = requestBody;
+
+			if (recipients && Array.isArray(recipients)) {
+				faxRequest.recipients = recipients;
+			} else if (recipient) {
+				faxRequest.recipients = [recipient];
+			}
+
+			if (message) faxRequest.message = message;
+			if (coverPage) faxRequest.coverPage = coverPage;
+			// Use provider's senderId if not specified in request
+			if (senderId) {
+				faxRequest.senderId = senderId;
+			} else if (this.senderId) {
+				faxRequest.senderId = this.senderId;
+			}
+
+			if (Object.keys(otherFields).length > 0) {
+				Object.assign(faxRequest, otherFields);
+			}
+
+			if (files && Array.isArray(files)) {
+				faxRequest.files = await this.processJsonFiles(files);
+			}
+		}
+
+		return faxRequest;
+	}
+
+	async processJsonFiles(files) {
+		const processedFiles = [];
+
+		for (let i = 0; i < files.length; i++) {
+			const file = files[i];
+
+			if (file.data) {
+				try {
+					const buffer = Uint8Array.from(atob(file.data), c => c.charCodeAt(0));
+					const blob = new Blob([buffer], { type: file.mimeType || 'application/pdf' });
+					processedFiles.push(blob);
+				} catch (base64Error) {
+					this.logger.log('ERROR', `Failed to decode base64 for file ${i}`, {
+						error: base64Error.message
+					});
+					throw new Error(`Invalid base64 data for file ${i}`);
+				}
+			} else {
+				processedFiles.push(file);
+			}
+		}
+
+		return processedFiles;
 	}
 
 	/**
@@ -111,12 +191,14 @@ export class TelnyxProvider {
 		const faxData = {
 			id: this.generateFaxId(),
 			user_id: userId,
-			recipient: faxRequest.recipients[0],
+			recipients: faxRequest.recipients || [],
 			sender_id: faxRequest.senderId,
 			subject: faxRequest.subject || faxRequest.message || 'Fax Document',
 			message: faxRequest.message,
 			provider: 'telnyx',
-			status: 'preparing',
+			// Use DB enum-compatible status while retaining provider-specific state in originalStatus
+			status: 'queued',
+			originalStatus: 'preparing',
 			created_at: new Date().toISOString(),
 			file_count: faxRequest.files ? faxRequest.files.length : 0
 		};
@@ -193,11 +275,11 @@ export class TelnyxProvider {
 	async updateFaxRecordWithR2Urls(faxId, mediaUrls) {
 		const updateData = {
 			r2_urls: mediaUrls,
-			status: 'uploading_complete',
-			updated_at: new Date().toISOString()
+			// Map to a valid DB status
+			status: 'processing'
 		};
 
-		await DatabaseUtils.updateFaxRecord(faxId, updateData, this.env, this.logger);
+		await DatabaseUtils.updateFaxRecord(faxId, updateData, this.env, this.logger, 'id');
 	}
 
 	/**
@@ -279,15 +361,45 @@ export class TelnyxProvider {
 	 * @returns {string} Standardized status
 	 */
 	mapStatus(telnyxStatus) {
+		// Map Telnyx-specific statuses to DB enum fax_status values
 		const statusMap = {
-			'queued': 'pending',
+			// Standard flow statuses
+			'queued': 'queued',
 			'sending': 'sending',
-			'delivered': 'completed',
+			'delivered': 'delivered',
 			'failed': 'failed',
-			'canceled': 'failed'
+			'canceled': 'cancelled',
+
+			// Error / edge-case statuses reported by Telnyx
+			'receiver_no_answer': 'no-answer',
+			'receiver_no_response': 'no-answer',
+			'user_busy': 'busy',
+
+			// Any other status values below (mostly error conditions) will be considered failed
+			'account_disabled': 'failed',
+			'connection_channel_limit_exceeded': 'failed',
+			'destination_invalid': 'failed',
+			'destination_not_in_countries_whitelist': 'failed',
+			'destination_not_in_service_plan': 'failed',
+			'destination_unreachable': 'failed',
+			'fax_initial_communication_timeout': 'failed',
+			'fax_signaling_error': 'failed',
+			'invalid_ecm_response_from_receiver': 'failed',
+			'no_outbound_profile': 'failed',
+			'outbound_profile_channel_limit_exceeded': 'failed',
+			'outbound_profile_daily_spend_limit_exceeded': 'failed',
+			'receiver_call_dropped': 'failed',
+			'receiver_communication_error': 'failed',
+			'receiver_decline': 'failed',
+			'receiver_incompatible_destination': 'failed',
+			'receiver_invalid_number_format': 'failed',
+			'receiver_recovery_on_timer_expire': 'failed',
+			'receiver_unallocated_number': 'failed',
+			'service_unavailable': 'failed',
+			'user_channel_limit_exceeded': 'failed'
 		};
 
-		return statusMap[telnyxStatus] || 'unknown';
+		return statusMap[telnyxStatus] || 'failed';
 	}
 
 	/**

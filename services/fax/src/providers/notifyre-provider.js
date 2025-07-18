@@ -17,6 +17,80 @@ export class NotifyreProvider {
 		return 'notifyre';
 	}
 
+	async prepareFaxRequest(requestBody) {
+		this.logger.log('DEBUG', 'Starting fax request preparation for Notifyre');
+		let faxRequest = {};
+
+		if (requestBody instanceof FormData) {
+			for (const [key, value] of requestBody.entries()) {
+				if (key === 'recipients[]') {
+					if (!faxRequest.recipients) faxRequest.recipients = [];
+					faxRequest.recipients.push(value);
+				} else if (key === 'files[]') {
+					if (!faxRequest.files) faxRequest.files = [];
+					faxRequest.files.push(value);
+				} else {
+					faxRequest[key] = value;
+				}
+			}
+		} else if (typeof requestBody === 'object' && requestBody !== null) {
+			const {
+				recipient,
+				recipients,
+				message,
+				coverPage,
+				files,
+				senderId,
+				...otherFields
+			} = requestBody;
+
+			if (recipients && Array.isArray(recipients)) {
+				faxRequest.recipients = recipients;
+			} else if (recipient) {
+				faxRequest.recipients = [recipient];
+			}
+
+			if (message) faxRequest.message = message;
+			if (coverPage) faxRequest.coverPage = coverPage;
+			if (senderId) faxRequest.senderId = senderId;
+
+			if (Object.keys(otherFields).length > 0) {
+				Object.assign(faxRequest, otherFields);
+			}
+
+			if (files && Array.isArray(files)) {
+				faxRequest.files = await this.processJsonFiles(files);
+			}
+		}
+
+		return faxRequest;
+	}
+
+	async processJsonFiles(files) {
+		const processedFiles = [];
+
+		for (let i = 0; i < files.length; i++) {
+			const file = files[i];
+
+			if (file.data) {
+				try {
+					const buffer = Uint8Array.from(atob(file.data), c => c.charCodeAt(0));
+					const blob = new Blob([buffer], { type: file.mimeType || 'application/pdf' });
+					processedFiles.push(blob);
+				} catch (base64Error) {
+					this.logger.log('ERROR', `Failed to decode base64 for file ${i}`, {
+						error: base64Error.message
+					});
+					throw new Error(`Invalid base64 data for file ${i}`);
+				}
+			} else {
+				processedFiles.push(file);
+			}
+		}
+
+		return processedFiles;
+	}
+
 	/**
 	 * Build Notifyre-specific payload from standardized fax request
 	 * @param {object} faxRequest - Standardized fax request

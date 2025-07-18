@@ -311,7 +311,8 @@ export class DatabaseUtils {
 					updated_at: new Date().toISOString()
 				})
 				.eq('notifyre_fax_id', faxId)
-				.select();
+				.select()
+				.single();
 
 			if (error) {
 				logger.log('ERROR', 'Failed to update fax record', {
@@ -321,8 +322,8 @@ export class DatabaseUtils {
 				return null;
 			}
 
-			// Check if any records were found and updated
-			if (!data || data.length === 0) {
+			// Check if any record was found and updated
+			if (!data) {
 				logger.log('WARN', 'Fax record not found in database, skipping update', {
 					faxId,
 					message: 'This fax may not have been sent through our system'
@@ -332,11 +333,10 @@ export class DatabaseUtils {
 
 			logger.log('DEBUG', 'Successfully updated fax record', {
 				faxId,
-				recordId: data[0]?.id,
-				recordsUpdated: data.length
+				recordId: data.id
 			});
 
-			return data[0];
+			return data;
 		} catch (error) {
 			logger.log('ERROR', 'Error updating fax record', {
 				faxId,

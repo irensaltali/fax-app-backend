@@ -1,3 +1,16 @@
+-- Create status enum type for better data integrity
+CREATE TYPE fax_status AS ENUM (
+  'queued',
+  'processing',
+  'sending',
+  'delivered',
+  'receiving',
+  'no-answer',
+  'busy',
+  'failed',
+  'cancelled'
+);
+
 create table public.faxes (
   id uuid not null default gen_random_uuid (),
   user_id uuid null,
