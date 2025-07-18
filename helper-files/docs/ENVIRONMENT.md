@@ -158,10 +158,78 @@ Below are trimmed examples for each object type to illustrate typical shapes and
 
 ---
 
-## 5. Troubleshooting
+## 5. Environment Variables and Bindings Reference
+
+This table shows which environment variables and bindings are used in each service and where they are defined.
+
+### Service-Level Variables (defined in each service's `wrangler.toml`)
+
+This is the environment variables and bindings that are defined in the `wrangler.toml` file and should be accessed via the `env` object.
+
+| Variable/Binding | Service | Type | Purpose | Source |
+|------------------|---------|------|---------|---------|
+| `FAX_FILES_BUCKET` | fax | R2 Binding | Store fax documents | `wrangler.toml` |
+| `LOG_LEVEL` | fax | Variable | Control logging verbosity | `wrangler.toml` |
+| `LOG_LEVEL` | cron | Variable | Control logging verbosity | `wrangler.toml` |
+| `LOG_LEVEL` | env-test | Variable | Control logging verbosity | `wrangler.toml` |
+
+### Gateway-Level Variables (defined in `wrangler.api.toml`)
+
+This is the environment variables and bindings that are defined in the `wrangler.api.toml` file and should be accessed via the `caller_env` object.
+
+Example:
+```bash
+let variable = caller_env.CONFIG;
+```
+
+| Variable/Binding | Service | Type | Purpose | Source |
+|------------------|---------|------|---------|---------|
+| `CONFIG` | All | Service Binding | API configuration | `wrangler.api.toml` |
+| `ENV_TEST_SERVICE` | All | Service Binding | Environment test service | `wrangler.api.toml` |
+| `FAX_SERVICE` | All | Service Binding | Fax processing service | `wrangler.api.toml` |
+| `LOG_LEVEL` | All | Variable | Gateway logging level | `wrangler.api.toml` |
+
+### Secrets (stored via `wrangler secret put`)
+
+This is the secrets that are stored via the `wrangler secret put` command and should be accessed via the `caller_env` object.
+
+Example:
+
+```bash
+let variable = caller_env.NOTIFYRE_API_KEY;
+```
+
+| Secret | Service | Purpose | Access Method |
+|--------|---------|---------|---------------|
+| `NOTIFYRE_API_KEY` | fax | Notifyre API authentication | `caller_env` |
+| `SUPABASE_URL` | fax, cron | Supabase database URL | `caller_env` |
+| `SUPABASE_SERVICE_ROLE_KEY` | fax, cron | Supabase admin access | `caller_env` |
+| `SUPABASE_ANON_KEY` | fax | Supabase anonymous access | `caller_env` |
+| `TELNYX_API_KEY` | fax | Telnyx API authentication | `caller_env` |
+| `TELNYX_CONNECTION_ID` | fax | Telnyx connection identifier | `caller_env` |
+
+### Provider-Specific Configuration
+
+| Variable | Provider | Purpose | Access Method |
+|----------|----------|---------|---------------|
+| `FAX_PROVIDER` | fax | Default fax provider (notifyre/telnyx) | `caller_env` |
+| `NOTIFYRE_API_KEY` | Notifyre | API authentication | `caller_env` |
+| `TELNYX_API_KEY` | Telnyx | API authentication | `caller_env` |
+| `TELNYX_CONNECTION_ID` | Telnyx | Connection identifier | `caller_env` |
+
+### Key Access Points
+
+- **Service's own variables**: Available via `this.env` or direct `env` import
+- **Gateway variables**: Available via `caller_env`
+- **Secrets**: Available via `caller_env`
+- **Service bindings**: Available via `caller_env`
+
+---
+
+## 6. Troubleshooting
 
 | Symptom | Likely Cause | Fix |
 |---------|--------------|-----|
 | `env` is `undefined` | Running code outside a Worker context (e.g. unit test) | Stub the `env` object or inject via constructor when testing |
-| `JSON.parse` fails on `caller_env` | Caller sent non-JSON payload | Inspect raw string and adjust gateway mapping |
-| Secrets not available | Secret not added in Wrangler | Run `wrangler secret put <NAME>` in the service directory | 
+| Secrets not available | Secret not added in Wrangler | Run `wrangler secret put <NAME>` in the service directory |
+
