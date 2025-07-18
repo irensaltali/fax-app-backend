@@ -165,19 +165,31 @@ This table shows which environment variables and bindings are used in each servi
 ### Service-Level Variables (defined in each service's `wrangler.toml`)
 
 This is the environment variables and bindings that are defined in the `wrangler.toml` file and should be accessed via the `env` object.
+All bindings are available via the `env` object.
+
+Example:
+
+```bash
+  env.FAX_FILES_BUCKET.put(file);
+  let variable = env.LOG_LEVEL;
+```
 
 | Variable/Binding | Service | Type | Purpose | Source |
 |------------------|---------|------|---------|---------|
 | `FAX_FILES_BUCKET` | fax | R2 Binding | Store fax documents | `wrangler.toml` |
+| `FAX_FILES_BUCKET_PUBLIC_URL` | All | Variable | Fax files public URL | `wrangler.toml` |
 | `LOG_LEVEL` | fax | Variable | Control logging verbosity | `wrangler.toml` |
 | `LOG_LEVEL` | cron | Variable | Control logging verbosity | `wrangler.toml` |
 | `LOG_LEVEL` | env-test | Variable | Control logging verbosity | `wrangler.toml` |
+| `TELNYX_CONNECTION_ID` | All | Variable | Telnyx connection identifier | `wrangler.toml` |
+| `TELNYX_SENDER_ID` | All | Variable | Telnyx sender ID | `wrangler.toml` |
 
 ### Gateway-Level Variables (defined in `wrangler.api.toml`)
 
 This is the environment variables and bindings that are defined in the `wrangler.api.toml` file and should be accessed via the `caller_env` object.
 
 Example:
+
 ```bash
 let variable = caller_env.CONFIG;
 ```
@@ -188,6 +200,13 @@ let variable = caller_env.CONFIG;
 | `ENV_TEST_SERVICE` | All | Service Binding | Environment test service | `wrangler.api.toml` |
 | `FAX_SERVICE` | All | Service Binding | Fax processing service | `wrangler.api.toml` |
 | `LOG_LEVEL` | All | Variable | Gateway logging level | `wrangler.api.toml` |
+| `FAX_PROVIDER` | All | Variable | Fax provider | `wrangler.api.toml` |
+| `NOTIFYRE_API_KEY` | All | Secret | Notifyre API authentication | Cloudflare Dashboard |
+| `SUPABASE_URL` | All | Variable | Supabase database URL | `wrangler.api.toml` |
+| `SUPABASE_SERVICE_ROLE_KEY` | All | Secret | Supabase admin access | Cloudflare Dashboard |
+| `SUPABASE_ANON_KEY` | All | Secret | Supabase anonymous access | Cloudflare Dashboard |
+| `SUPABASE_JWT_SECRET` | All | Secret | Supabase JWT secret | Cloudflare Dashboard |
+| `TELNYX_API_KEY` | All | Secret | Telnyx API authentication | Cloudflare Dashboard |
 
 ### Secrets (stored via `wrangler secret put`)
 
@@ -207,15 +226,6 @@ let variable = caller_env.NOTIFYRE_API_KEY;
 | `SUPABASE_ANON_KEY` | fax | Supabase anonymous access | `caller_env` |
 | `TELNYX_API_KEY` | fax | Telnyx API authentication | `caller_env` |
 | `TELNYX_CONNECTION_ID` | fax | Telnyx connection identifier | `caller_env` |
-
-### Provider-Specific Configuration
-
-| Variable | Provider | Purpose | Access Method |
-|----------|----------|---------|---------------|
-| `FAX_PROVIDER` | fax | Default fax provider (notifyre/telnyx) | `caller_env` |
-| `NOTIFYRE_API_KEY` | Notifyre | API authentication | `caller_env` |
-| `TELNYX_API_KEY` | Telnyx | API authentication | `caller_env` |
-| `TELNYX_CONNECTION_ID` | Telnyx | Connection identifier | `caller_env` |
 
 ### Key Access Points
 

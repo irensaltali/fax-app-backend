@@ -55,3 +55,6 @@ services = [
 
 [env.prod.vars]
 AUTH0_REDIRECT_URI="https://api.sendfax.pro/v1/auth/callback-redirect"
+# Add missing environment variables for fax service
+LOG_LEVEL = "INFO"
+FAX_PROVIDER = "notifyre"
