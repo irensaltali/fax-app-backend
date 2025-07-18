@@ -164,7 +164,7 @@ FAX_PROVIDER=notifyre  # or telnyx
 
 ### Adding New Fax Provider
 1. Create provider class extending `BaseFaxProvider`
-2. Implement required methods: `sendFax`, `getFaxStatus`, `buildPayload`
+2. Implement required methods: `sendFax`, `buildPayload`
 3. Add to `provider-factory.js` and environment handling
 4. Add required environment variables
 5. Update documentation

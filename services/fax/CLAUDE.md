@@ -118,7 +118,6 @@ The service implements a WorkerEntrypoint pattern with these main methods:
 
 ### Core Methods
 - `sendFax(request, caller_env, sagContext)` - Send fax via configured provider
-- `getFaxStatus(request, caller_env, sagContext)` - Get fax status
 - `health(request, caller_env, sagContext)` - Health check (unauthenticated)
 - `healthProtected(request, caller_env, sagContext)` - Health check (authenticated)
 
@@ -163,10 +162,6 @@ The service implements a WorkerEntrypoint pattern with these main methods:
      
      async sendFax(payload) {
        // Send fax implementation
-     }
-     
-     async getFaxStatus(faxId) {
-       // Status check implementation
      }
    }
    ```

@@ -65,16 +65,6 @@
         },
         {
             "method": "GET",
-            "path": "/v1/fax/status",
-            "integration": {
-                "type": "service_binding",
-                "binding": "fax_service",
-                "function": "getFaxStatus"
-            },
-            "auth": true
-        },
-        {
-            "method": "GET",
             "path": "/v1/fax/health",
             "integration": {
                 "type": "service_binding",

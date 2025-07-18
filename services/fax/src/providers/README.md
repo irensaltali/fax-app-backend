@@ -55,11 +55,6 @@ export class TwilioProvider extends BaseFaxProvider {
         // Return standardized response
     }
 
-    async getFaxStatus(faxId) {
-        // Get status from Twilio API
-        // Return standardized status
-    }
-
     mapStatus(twilioStatus) {
         // Map Twilio status to standard status
         const statusMap = {
