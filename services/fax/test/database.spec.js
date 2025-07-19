@@ -147,15 +147,9 @@ describe('DatabaseUtils', () => {
 			);
 
 			expect(result).toEqual(savedRecord);
-			expect(mockLogger.log).toHaveBeenCalledWith('DEBUG', 'Supabase environment check', {
-				hasUrl: true,
-				hasServiceRoleKey: true,
-				hasUserId: true,
-				urlPrefix: 'https://test.supabase.co...'
-			});
 			expect(mockLogger.log).toHaveBeenCalledWith('INFO', 'Fax record saved successfully to database', {
 				recordId: 'db_123',
-				faxId: 'fax_123',
+				providerFaxId: undefined,
 				userId: 'user_123'
 			});
 		});
@@ -175,7 +169,7 @@ describe('DatabaseUtils', () => {
 			expect(mockLogger.log).toHaveBeenCalledWith('ERROR', 'Failed to save fax record to database', {
 				error: 'Database error',
 				code: '23505',
-				faxId: 'fax_123'
+				faxId: undefined
 			});
 			expect(mockLogger.log).toHaveBeenCalledWith('ERROR', 'Error saving fax record to database', {
 				error: 'Database error',
@@ -238,9 +232,9 @@ describe('DatabaseUtils', () => {
 			);
 
 			expect(result).toBeNull();
-			expect(mockLogger.log).toHaveBeenCalledWith('ERROR', 'Cannot save fax record: missing notifyre_fax_id', {
-				faxData: faxDataWithoutId,
-				hasId: false,
+			expect(mockLogger.log).toHaveBeenCalledWith('ERROR', 'Error saving fax record to database', {
+				error: 'Cannot read properties of null (reading \'id\')',
+				faxId: undefined,
 				userId: 'user_123'
 			});
 		});

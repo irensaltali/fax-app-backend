@@ -82,6 +82,17 @@ vi.mock('../src/providers/telnyx-provider.js', () => ({
 				id: 'telnyx-fax-123',
 				status: 'queued'
 			}
+		}),
+		mapStatus: vi.fn().mockImplementation((status) => {
+			// Simple status mapping for tests
+			const statusMap = {
+				'delivered': 'delivered',
+				'failed': 'failed',
+				'queued': 'queued',
+				'sending': 'sending',
+				'canceled': 'cancelled'
+			};
+			return statusMap[status] || 'failed';
 		})
 	}))
 }));
@@ -456,6 +467,140 @@ describe('Fax Service', () => {
 			expect(result.data.service).toBe('fax');
 			expect(result.data.user.sub).toBe('test-user-123');
 			expect(result.data.version).toBe('2.0.0');
+		});
+	});
+
+	describe('Telnyx webhook handler', () => {
+		beforeEach(() => {
+			// Clear mock calls between tests
+			DatabaseUtils.updateFaxRecord.mockClear();
+			DatabaseUtils.storeWebhookEvent.mockClear();
+		});
+
+		it('should process Telnyx webhook with page count successfully', async () => {
+			const webhookPayload = {
+				data: {
+					event_type: 'fax.delivered',
+					payload: {
+						fax_id: 'a92b4cc7-6817-49e8-932b-fef103d35b5c',
+						status: 'delivered',
+						page_count: 3,
+						call_duration_secs: 169,
+						from: '+18334610414',
+						to: '+19725329272'
+					}
+				}
+			};
+
+			const request = new Request('https://api.sendfax.pro/v1/fax/webhook/telnyx', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(webhookPayload)
+			});
+
+			const result = await faxService.telnyxWebhook(request, JSON.stringify(mockEnv), JSON.stringify(mockSagContext));
+
+			expect(result.statusCode).toBe(200);
+			expect(result.message).toBe('Webhook processed successfully');
+			expect(result.data.faxId).toBe('a92b4cc7-6817-49e8-932b-fef103d35b5c');
+			expect(result.data.standardizedStatus).toBe('delivered');
+
+			// Verify that updateFaxRecord was called with page count
+			expect(DatabaseUtils.updateFaxRecord).toHaveBeenCalledWith(
+				'a92b4cc7-6817-49e8-932b-fef103d35b5c',
+				expect.objectContaining({
+					status: 'delivered',
+					original_status: 'delivered',
+					pages: 3,
+					metadata: webhookPayload.data.payload
+				}),
+				mockEnv,
+				expect.any(Object), // logger
+				'provider_fax_id'
+			);
+
+			// Verify webhook event was stored
+			expect(DatabaseUtils.storeWebhookEvent).toHaveBeenCalledWith(
+				expect.objectContaining({
+					event: 'fax.delivered',
+					faxId: 'a92b4cc7-6817-49e8-932b-fef103d35b5c',
+					processedData: expect.objectContaining({
+						pages: 3
+					}),
+					rawPayload: webhookPayload
+				}),
+				mockEnv,
+				expect.any(Object) // logger
+			);
+		});
+
+		it('should process Telnyx webhook without page count', async () => {
+			const webhookPayload = {
+				data: {
+					event_type: 'fax.failed',
+					payload: {
+						fax_id: 'a92b4cc7-6817-49e8-932b-fef103d35b5c',
+						status: 'failed',
+						failure_reason: 'destination_unreachable',
+						from: '+18334610414',
+						to: '+19725329272'
+					}
+				}
+			};
+
+			const request = new Request('https://api.sendfax.pro/v1/fax/webhook/telnyx', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(webhookPayload)
+			});
+
+			const result = await faxService.telnyxWebhook(request, JSON.stringify(mockEnv), JSON.stringify(mockSagContext));
+
+			expect(result.statusCode).toBe(200);
+			expect(result.message).toBe('Webhook processed successfully');
+
+			// Verify that updateFaxRecord was called without page count
+			expect(DatabaseUtils.updateFaxRecord).toHaveBeenCalledWith(
+				'a92b4cc7-6817-49e8-932b-fef103d35b5c',
+				expect.objectContaining({
+					status: 'failed',
+					original_status: 'failed',
+					error_message: 'destination_unreachable',
+					metadata: webhookPayload.data.payload
+				}),
+				mockEnv,
+				expect.any(Object), // logger
+				'provider_fax_id'
+			);
+
+			// Verify that pages field is not included in the update data
+			const updateCall = DatabaseUtils.updateFaxRecord.mock.calls.find(
+				call => call[0] === 'a92b4cc7-6817-49e8-932b-fef103d35b5c'
+			);
+			expect(updateCall[1]).not.toHaveProperty('pages');
+		});
+
+		it('should handle webhook with missing fax_id', async () => {
+			const webhookPayload = {
+				data: {
+					event_type: 'fax.delivered',
+					payload: {
+						status: 'delivered',
+						page_count: 3
+					}
+				}
+			};
+
+			const request = new Request('https://api.sendfax.pro/v1/fax/webhook/telnyx', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(webhookPayload)
+			});
+
+			const result = await faxService.telnyxWebhook(request, JSON.stringify(mockEnv), JSON.stringify(mockSagContext));
+
+			expect(result.statusCode).toBe(400);
+			expect(result.error).toBe('Invalid webhook payload: missing fax_id');
 		});
 	});
 

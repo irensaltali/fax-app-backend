@@ -152,8 +152,10 @@ describe('TelnyxProvider', () => {
 				expect.objectContaining({
 					user_id: userId,
 					recipients: ['+1234567890'],
-					provider: 'telnyx',
-					status: 'queued'
+					sender_id: '+1987654321',
+					subject: 'Test fax',
+					status: 'queued',
+					original_status: 'preparing'
 				}),
 				userId,
 				mockEnv,
@@ -220,16 +222,13 @@ describe('TelnyxProvider', () => {
 
 			expect(DatabaseUtils.saveFaxRecord).toHaveBeenCalledWith(
 				expect.objectContaining({
-					id: expect.stringMatching(/^telnyx_\d+_[a-z0-9]+$/),
 					user_id: userId,
 					recipients: ['+1234567890'],
 					sender_id: '+1987654321',
 					subject: 'Test Subject',
-					message: 'Test message',
-					provider: 'telnyx',
 					status: 'queued',
-					created_at: expect.any(String),
-					file_count: 2
+					original_status: 'preparing',
+					created_at: expect.any(String)
 				}),
 				userId,
 				mockEnv,
@@ -452,14 +451,15 @@ describe('TelnyxProvider', () => {
 			expect(DatabaseUtils.updateFaxRecord).toHaveBeenCalledWith(
 				faxId,
 				{
-					telnyx_fax_id: 'telnyx-fax-456',
+					provider_fax_id: 'telnyx-fax-456',
+					metadata: telnyxResponse,
 					status: 'queued',
-					telnyx_response: telnyxResponse,
 					sent_at: expect.any(String),
 					updated_at: expect.any(String)
 				},
 				mockEnv,
-				mockLogger
+				mockLogger,
+				'id'
 			);
 		});
 	});

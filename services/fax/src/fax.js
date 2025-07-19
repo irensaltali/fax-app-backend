@@ -483,6 +483,7 @@ export default class extends WorkerEntrypoint {
 			const telnyxFaxId = payload.fax_id || null;
 			const statusFromPayload = payload.status || null;
 			const failureReason = payload.failure_reason || null;
+			const pageCount = payload.page_count || null;
 
 			if (!telnyxFaxId) {
 				this.logger.log('ERROR', 'Telnyx webhook missing fax_id in payload');
@@ -502,6 +503,15 @@ export default class extends WorkerEntrypoint {
 				completed_at: ['delivered', 'failed', 'cancelled'].includes(standardizedStatus) ? new Date().toISOString() : null
 			};
 
+			// Add page count if available in the webhook payload
+			if (pageCount !== null && pageCount !== undefined) {
+				updateData.pages = pageCount;
+				this.logger.log('DEBUG', 'Page count included in webhook update', { 
+					telnyxFaxId, 
+					pageCount 
+				});
+			}
+
 			// Update fax record using provider_fax_id as lookup key
 			await DatabaseUtils.updateFaxRecord(telnyxFaxId, updateData, callerEnvObj, this.logger, 'provider_fax_id');
 
@@ -513,7 +523,11 @@ export default class extends WorkerEntrypoint {
 				rawPayload: body
 			}, callerEnvObj, this.logger);
 
-			this.logger.log('INFO', 'Telnyx webhook processed successfully', { telnyxFaxId, eventType });
+			this.logger.log('INFO', 'Telnyx webhook processed successfully', { 
+				telnyxFaxId, 
+				eventType,
+				pageCount: pageCount || 'not provided'
+			});
 
 			return {
 				statusCode: 200,
