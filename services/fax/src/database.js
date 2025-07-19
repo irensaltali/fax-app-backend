@@ -17,27 +17,6 @@ export class DatabaseUtils {
 
 	static async saveFaxRecord(faxData, userId, env, logger) {
 		try {
-			logger.log('DEBUG', 'Supabase environment check', {
-				hasUrl: !!env.SUPABASE_URL,
-				hasServiceRoleKey: !!env.SUPABASE_SERVICE_ROLE_KEY,
-				hasUserId: !!userId,
-				urlPrefix: env.SUPABASE_URL ? env.SUPABASE_URL.substring(0, 30) + '...' : 'none'
-			});
-
-			if (!faxData.id) {
-				logger.log('ERROR', 'Cannot save fax record: missing provider_fax_id', {
-					faxData: faxData,
-					hasId: !!faxData.id,
-					userId: userId
-				});
-				logger.log('ERROR', 'Cannot save fax record: missing notifyre_fax_id', {
-					faxData: faxData,
-					hasId: !!faxData.id,
-					userId: userId
-				});
-				return null;
-			}
-
 			const supabase = this.getSupabaseAdminClient(env);
 
 			const metadata = {
@@ -47,7 +26,6 @@ export class DatabaseUtils {
 
 			const faxRecord = {
 				user_id: userId,
-				provider_fax_id: faxData.id,
 				status: faxData.status || 'queued',
 				original_status: faxData.originalStatus || faxData.status || 'queued',
 				recipients: faxData.recipients || [],
@@ -62,15 +40,7 @@ export class DatabaseUtils {
 				metadata: metadata
 			};
 
-			logger.log('DEBUG', 'Saving fax record to database', {
-				userId: userId,
-				faxId: faxRecord.provider_fax_id,
-				status: faxRecord.status,
-				recipientCount: Array.isArray(faxRecord.recipients) ? faxRecord.recipients.length : 0,
-				isAnonymous: !userId
-			});
-
-			const { data, error } = await supabase
+			const { data: recordedFaxData, error } = await supabase
 				.from('faxes')
 				.insert(faxRecord)
 				.select()
@@ -85,21 +55,19 @@ export class DatabaseUtils {
 				throw error;
 			}
 
-			const resolvedFaxId = data.notifyre_fax_id || data.provider_fax_id || data.id;
+			
 			logger.log('INFO', 'Fax record saved successfully to database', {
-				recordId: data.id,
-				faxId: resolvedFaxId,
-				userId: data.user_id,
-				isAnonymous: !data.user_id
+				recordId: recordedFaxData.id,
+				providerFaxId: recordedFaxData.provider_fax_id,
+				userId: recordedFaxData.user_id,
 			});
 
-			return data;
+			return recordedFaxData;
 		} catch (error) {
 			logger.log('ERROR', 'Error saving fax record to database', {
 				error: error.message,
 				faxId: faxData?.id,
-				userId: userId,
-				isAnonymous: !userId
+				userId: userId
 			});
 			return null;
 		}

@@ -189,18 +189,14 @@ export class TelnyxProvider {
 	 */
 	async createInitialFaxRecord(faxRequest, userId) {
 		const faxData = {
-			id: this.generateFaxId(),
 			user_id: userId,
 			recipients: faxRequest.recipients || [],
 			sender_id: faxRequest.senderId,
 			subject: faxRequest.subject || faxRequest.message || 'Fax Document',
-			message: faxRequest.message,
-			provider: 'telnyx',
 			// Use DB enum-compatible status while retaining provider-specific state in originalStatus
 			status: 'queued',
-			originalStatus: 'preparing',
-			created_at: new Date().toISOString(),
-			file_count: faxRequest.files ? faxRequest.files.length : 0
+			original_status: 'preparing',
+			created_at: new Date().toISOString()
 		};
 
 		return await DatabaseUtils.saveFaxRecord(faxData, userId, this.env, this.logger);
@@ -334,14 +330,14 @@ export class TelnyxProvider {
 	 */
 	async updateFaxRecordWithTelnyxResponse(faxId, telnyxResponse) {
 		const updateData = {
-			telnyx_fax_id: telnyxResponse.id,
-			telnyx_response: telnyxResponse,
+			provider_fax_id: telnyxResponse.id,
+			metadata: telnyxResponse,
 			status: this.mapStatus(telnyxResponse.status),
 			sent_at: new Date().toISOString(),
 			updated_at: new Date().toISOString()
 		};
 
-		await DatabaseUtils.updateFaxRecord(faxId, updateData, this.env, this.logger);
+		await DatabaseUtils.updateFaxRecord(faxId, updateData, this.env, this.logger, 'id');
 	}
 
 	/**

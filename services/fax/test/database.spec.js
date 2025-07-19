@@ -156,8 +156,7 @@ describe('DatabaseUtils', () => {
 			expect(mockLogger.log).toHaveBeenCalledWith('INFO', 'Fax record saved successfully to database', {
 				recordId: 'db_123',
 				faxId: 'fax_123',
-				userId: 'user_123',
-				isAnonymous: false
+				userId: 'user_123'
 			});
 		});
 
@@ -181,8 +180,7 @@ describe('DatabaseUtils', () => {
 			expect(mockLogger.log).toHaveBeenCalledWith('ERROR', 'Error saving fax record to database', {
 				error: 'Database error',
 				faxId: 'fax_123',
-				userId: 'user_123',
-				isAnonymous: false
+				userId: 'user_123'
 			});
 		});
 
@@ -204,11 +202,7 @@ describe('DatabaseUtils', () => {
 			);
 
 			expect(result).toEqual(savedRecord);
-			expect(mockLogger.log).toHaveBeenCalledWith('DEBUG', 'Saving fax record to database', 
-				expect.objectContaining({
-					isAnonymous: true
-				})
-			);
+		
 		});
 
 		it('should handle missing fax data gracefully', async () => {

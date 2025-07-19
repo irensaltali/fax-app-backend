@@ -175,8 +175,12 @@ export default class extends WorkerEntrypoint {
 	async sendFax(request, caller_env, sagContext) {
 		try {
 			this.initializeLogger(this.env);
-			caller_env = JSON.parse(caller_env);
-			sagContext = JSON.parse(sagContext);
+			// Ensure we have usable objects regardless of whether inputs are strings
+			const callerEnvObj = typeof caller_env === 'string' ? JSON.parse(caller_env || '{}') : (caller_env || {});
+			const sagContextObj = typeof sagContext === 'string' ? JSON.parse(sagContext || '{}') : (sagContext || {});
+
+			// Store for access in helper methods
+			this.callerEnvObj = callerEnvObj;
 
 			this.logger.log('INFO', 'Send fax request received', {
 				method: request.method,
@@ -187,12 +191,12 @@ export default class extends WorkerEntrypoint {
 
 			const requestBody = await this.parseRequestBody(request);
 
-			const apiProviderName = await this.getApiProviderName(request, requestBody, caller_env);
+			const apiProviderName = await this.getApiProviderName(request, requestBody, callerEnvObj);
 
-			const faxProvider = await this.createFaxProvider(apiProviderName, caller_env);
+			const faxProvider = await this.createFaxProvider(apiProviderName, callerEnvObj);
 			const faxRequest = await faxProvider.prepareFaxRequest(requestBody);
 
-			const userId = sagContext.jwtPayload?.sub || sagContext.jwtPayload?.user_id || sagContext.user?.id || null;
+			const userId = sagContextObj.jwtPayload?.sub || sagContextObj.jwtPayload?.user_id || sagContextObj.user?.id || null;
 			let faxResult;
 
 			if (faxProvider.getProviderName() === 'telnyx') {
@@ -441,7 +445,11 @@ export default class extends WorkerEntrypoint {
 				apiProvider: providerName
 			};
 
-			const savedFaxRecord = await DatabaseUtils.saveFaxRecord(faxDataForSave, userId, this.env, this.logger);
+			// Prefer caller environment (where Supabase keys usually reside) if available
+			const envForDb = (this.callerEnvObj && this.callerEnvObj.SUPABASE_SERVICE_ROLE_KEY)
+				? this.callerEnvObj
+				: this.env;
+			const savedFaxRecord = await DatabaseUtils.saveFaxRecord(faxDataForSave, userId, envForDb, this.logger);
 
 			this.logger.log('DEBUG', 'Fax record saved successfully', {
 				faxId: savedFaxRecord?.id,
@@ -462,6 +470,9 @@ export default class extends WorkerEntrypoint {
 	async telnyxWebhook(request, caller_env = "{}", sagContext = "{}") {
 		try {
 			this.initializeLogger(this.env);
+			// Ensure caller_env is an object for downstream DB utils
+			const callerEnvObj = typeof caller_env === 'string' ? JSON.parse(caller_env || '{}') : (caller_env || {});
+
 			this.logger.log('INFO', 'Telnyx webhook received');
 
 			// Parse JSON body safely
@@ -487,12 +498,12 @@ export default class extends WorkerEntrypoint {
 				status: standardizedStatus,
 				original_status: statusFromPayload,
 				error_message: failureReason || null,
-				telnyx_response: payload,
+				metadata: payload,
 				completed_at: ['delivered', 'failed', 'cancelled'].includes(standardizedStatus) ? new Date().toISOString() : null
 			};
 
-			// Update fax record using telnyx_fax_id as lookup key
-			await DatabaseUtils.updateFaxRecord(telnyxFaxId, updateData, this.env, this.logger, 'telnyx_fax_id');
+			// Update fax record using provider_fax_id as lookup key
+			await DatabaseUtils.updateFaxRecord(telnyxFaxId, updateData, callerEnvObj, this.logger, 'provider_fax_id');
 
 			// Store webhook event for audit/logging
 			await DatabaseUtils.storeWebhookEvent({
@@ -500,7 +511,7 @@ export default class extends WorkerEntrypoint {
 				faxId: telnyxFaxId,
 				processedData: updateData,
 				rawPayload: body
-			}, this.env, this.logger);
+			}, callerEnvObj, this.logger);
 
 			this.logger.log('INFO', 'Telnyx webhook processed successfully', { telnyxFaxId, eventType });
 

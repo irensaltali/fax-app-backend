@@ -14,7 +14,7 @@ CREATE TYPE fax_status AS ENUM (
 create table public.faxes (
   id uuid not null default gen_random_uuid (),
   user_id uuid null,
-  provider_fax_id text not null,
+  provider_fax_id text null,
   status public.fax_status not null default 'queued'::fax_status,
   original_status text not null,
   recipients jsonb not null default '[]'::jsonb,
