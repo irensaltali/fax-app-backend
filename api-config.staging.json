@@ -22,6 +22,10 @@
         {
             "alias": "env_test_service",
             "binding": "ENV_TEST_SERVICE"
+        },
+        {
+            "alias": "revenuecat_service",
+            "binding": "REVENUECAT_SERVICE"
         }
     ],
     "cors": {
@@ -126,6 +130,36 @@
                 "function": "telnyxWebhook"
             },
             "auth": false
+        },
+        {
+            "method": "POST",
+            "path": "/v1/revenuecat/webhook",
+            "integration": {
+                "type": "service_binding",
+                "binding": "revenuecat_service",
+                "function": "webhook"
+            },
+            "auth": false
+        },
+        {
+            "method": "GET",
+            "path": "/v1/revenuecat/health",
+            "integration": {
+                "type": "service_binding",
+                "binding": "revenuecat_service",
+                "function": "health"
+            },
+            "auth": false
+        },
+        {
+            "method": "GET",
+            "path": "/v1/revenuecat/health/protected",
+            "integration": {
+                "type": "service_binding",
+                "binding": "revenuecat_service",
+                "function": "healthProtected"
+            },
+            "auth": true
         }
     ]
 }
