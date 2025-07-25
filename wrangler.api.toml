@@ -32,7 +32,8 @@ kv_namespaces = [
 
 services = [
   { binding = "FAX_SERVICE", service = "fax-service-staging" },
-  { binding = "ENV_TEST_SERVICE", service ="env-test-service-staging" }
+  { binding = "ENV_TEST_SERVICE", service = "env-test-service-staging" },
+  { binding = "REVENUECAT_SERVICE", service = "revenuecat-service-staging" }
 ]
 
 [env.staging.vars]
@@ -53,6 +54,7 @@ kv_namespaces = [
 
 services = [
   { binding = "FAX_SERVICE", service = "fax-service-prod" },
+  { binding = "REVENUECAT_SERVICE", service = "revenuecat-service-prod" }
 ]
 
 [env.prod.vars]
