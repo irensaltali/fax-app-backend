@@ -5,10 +5,6 @@
 import { createClient } from '@supabase/supabase-js';
 
 export class DatabaseUtils {
-	constructor(logger, callerEnvironment) {
-		this.logger = logger;
-		this.callerEnvironment = callerEnvironment;
-	}
 
 	static getSupabaseAdminClient(env) {
 		if (!env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -23,26 +19,43 @@ export class DatabaseUtils {
 	/**
 	 * Store RevenueCat webhook event in database
 	 * @param {Object} webhookData - The webhook data to store
+	 * @param {Object} env - Environment variables
+	 * @param {Object} logger - Logger instance
 	 * @returns {Promise<Object|null>} - The stored webhook event or null if failed
 	 */
-	async storeRevenueCatWebhookEvent(webhookData) {
+	static async storeRevenueCatWebhookEvent(webhookData, env, logger) {
 		try {
-			if (!this.callerEnvironment.SUPABASE_URL || !this.callerEnvironment.SUPABASE_SERVICE_ROLE_KEY) {
-				this.logger.log('WARN', 'Supabase not configured, skipping webhook event storage');
-				return null;
+			if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+				logger.log('WARN', 'Supabase not configured, skipping webhook event storage');
+				logger.log('WARN', 'Supabase URL:', env.SUPABASE_URL);
+				logger.log('WARN', 'Supabase SERVICE_ROLE_KEY:', env.SUPABASE_SERVICE_ROLE_KEY);
+				throw new Error('Supabase not configured');
 			}
 
-			const supabase = DatabaseUtils.getSupabaseAdminClient(this.callerEnvironment);
+			const supabase = DatabaseUtils.getSupabaseAdminClient(env);
 
 			// Extract relevant information from webhook data
 			const event = webhookData.event || {};
 			const user = webhookData.user || {};
 			const product = webhookData.product || {};
 
+			// For webhook events, we'll try to use the user_id if provided
+			// If the user doesn't exist, we'll handle the foreign key constraint error gracefully
+			let userId = event.app_user_id || event.original_app_user_id;
+			
+			// For TEST events, always set user_id to null
+			if (event.type === 'TEST') {
+				userId = null;
+				logger.log('INFO', 'Setting user_id to null for TEST event', {
+					eventType: event.type,
+					originalUserId: event.app_user_id || event.original_app_user_id
+				});
+			}
+
 			const webhookRecord = {
 				event_type: event.type,
 				event_id: event.id,
-				user_id: event.app_user_id || event.original_app_user_id,
+				user_id: userId,
 				product_id: event.product_id,
 				subscription_id: event.subscription_id,
 				entitlement_id: event.entitlement_id,
@@ -66,20 +79,38 @@ export class DatabaseUtils {
 				processed_at: new Date().toISOString()
 			};
 
-			this.logger.log('DEBUG', 'Storing RevenueCat webhook event', {
+			logger.log('DEBUG', 'Storing RevenueCat webhook event', {
 				eventType: webhookRecord.event_type,
 				userId: webhookRecord.user_id,
 				productId: webhookRecord.product_id
 			});
 
-			const { data: storedEvent, error } = await supabase
+			let { data: storedEvent, error } = await supabase
 				.from('revenuecat_webhook_events')
 				.insert(webhookRecord)
 				.select()
 				.single();
 
+			// If we get a foreign key constraint error, try again with user_id set to null
+			if (error && error.code === '23503' && error.message.includes('user_id_fkey') && userId !== null) {
+				logger.log('WARN', 'Foreign key constraint error for user_id, retrying with null', {
+					userId: userId,
+					eventType: webhookRecord.event_type
+				});
+				
+				webhookRecord.user_id = null;
+				const retryResult = await supabase
+					.from('revenuecat_webhook_events')
+					.insert(webhookRecord)
+					.select()
+					.single();
+				
+				storedEvent = retryResult.data;
+				error = retryResult.error;
+			}
+
 			if (error) {
-				this.logger.log('ERROR', 'Failed to store RevenueCat webhook event', {
+				logger.log('ERROR', 'Failed to store RevenueCat webhook event', {
 					error: error.message,
 					code: error.code,
 					eventType: webhookRecord.event_type
@@ -87,7 +118,7 @@ export class DatabaseUtils {
 				throw error;
 			}
 
-			this.logger.log('INFO', 'RevenueCat webhook event stored successfully', {
+			logger.log('INFO', 'RevenueCat webhook event stored successfully', {
 				eventId: storedEvent.id,
 				eventType: storedEvent.event_type,
 				userId: storedEvent.user_id
@@ -95,7 +126,7 @@ export class DatabaseUtils {
 
 			return storedEvent;
 		} catch (error) {
-			this.logger.log('ERROR', 'Error storing RevenueCat webhook event', {
+			logger.log('ERROR', 'Error storing RevenueCat webhook event', {
 				error: error.message,
 				eventType: webhookData?.event?.type
 			});
@@ -106,20 +137,31 @@ export class DatabaseUtils {
 	/**
 	 * Update user subscription status based on webhook event
 	 * @param {Object} webhookData - The webhook data
+	 * @param {Object} env - Environment variables
+	 * @param {Object} logger - Logger instance
 	 * @returns {Promise<Object|null>} - The updated user record or null if failed
 	 */
-	async updateUserSubscriptionStatus(webhookData) {
+	static async updateUserSubscriptionStatus(webhookData, env, logger) {
 		try {
-			if (!this.callerEnvironment.SUPABASE_URL || !this.callerEnvironment.SUPABASE_SERVICE_ROLE_KEY) {
-				this.logger.log('WARN', 'Supabase not configured, skipping user subscription update');
+			if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+				logger.log('WARN', 'Supabase not configured, skipping user subscription update');
 				return null;
 			}
 
-			const supabase = DatabaseUtils.getSupabaseAdminClient(this.callerEnvironment);
+			const supabase = DatabaseUtils.getSupabaseAdminClient(env);
 			const event = webhookData.event || {};
 
 			if (!event.app_user_id) {
-				this.logger.log('WARN', 'No user ID in webhook data, skipping subscription update');
+				logger.log('WARN', 'No user ID in webhook data, skipping subscription update');
+				return null;
+			}
+
+			// Skip subscription updates for TEST events
+			if (event.type === 'TEST') {
+				logger.log('INFO', 'Skipping subscription update for TEST event', {
+					userId: event.app_user_id,
+					eventType: event.type
+				});
 				return null;
 			}
 
@@ -152,7 +194,7 @@ export class DatabaseUtils {
 				updated_at: new Date().toISOString()
 			};
 
-			this.logger.log('DEBUG', 'Updating user subscription status', {
+			logger.log('DEBUG', 'Updating user subscription status', {
 				userId: event.app_user_id,
 				status: subscriptionStatus,
 				productId: event.product_id
@@ -166,21 +208,21 @@ export class DatabaseUtils {
 				.single();
 
 			if (error) {
-				this.logger.log('ERROR', 'Failed to update user subscription status', {
+				logger.log('ERROR', 'Failed to update user subscription status', {
 					error: error.message,
 					userId: event.app_user_id
 				});
 				throw error;
 			}
 
-			this.logger.log('INFO', 'User subscription status updated successfully', {
+			logger.log('INFO', 'User subscription status updated successfully', {
 				userId: updatedUser.id,
 				status: updatedUser.subscription_status
 			});
 
 			return updatedUser;
 		} catch (error) {
-			this.logger.log('ERROR', 'Error updating user subscription status', {
+			logger.log('ERROR', 'Error updating user subscription status', {
 				error: error.message,
 				userId: webhookData?.event?.app_user_id
 			});
@@ -191,16 +233,18 @@ export class DatabaseUtils {
 	/**
 	 * Get user subscription information
 	 * @param {string} userId - The user ID
+	 * @param {Object} env - Environment variables
+	 * @param {Object} logger - Logger instance
 	 * @returns {Promise<Object|null>} - The user subscription data or null if not found
 	 */
-	async getUserSubscription(userId) {
+	static async getUserSubscription(userId, env, logger) {
 		try {
-			if (!this.callerEnvironment.SUPABASE_URL || !this.callerEnvironment.SUPABASE_SERVICE_ROLE_KEY) {
-				this.logger.log('WARN', 'Supabase not configured, cannot get user subscription');
+			if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+				logger.log('WARN', 'Supabase not configured, cannot get user subscription');
 				return null;
 			}
 
-			const supabase = DatabaseUtils.getSupabaseAdminClient(this.callerEnvironment);
+			const supabase = DatabaseUtils.getSupabaseAdminClient(env);
 
 			const { data: user, error } = await supabase
 				.from('profiles')
@@ -209,7 +253,7 @@ export class DatabaseUtils {
 				.single();
 
 			if (error) {
-				this.logger.log('ERROR', 'Failed to get user subscription', {
+				logger.log('ERROR', 'Failed to get user subscription', {
 					error: error.message,
 					userId: userId
 				});
@@ -218,7 +262,7 @@ export class DatabaseUtils {
 
 			return user;
 		} catch (error) {
-			this.logger.log('ERROR', 'Error getting user subscription', {
+			logger.log('ERROR', 'Error getting user subscription', {
 				error: error.message,
 				userId: userId
 			});
@@ -230,16 +274,18 @@ export class DatabaseUtils {
 	 * Get webhook events for a user
 	 * @param {string} userId - The user ID
 	 * @param {Object} options - Query options
+	 * @param {Object} env - Environment variables
+	 * @param {Object} logger - Logger instance
 	 * @returns {Promise<Array>} - Array of webhook events
 	 */
-	async getUserWebhookEvents(userId, options = {}) {
+	static async getUserWebhookEvents(userId, options = {}, env, logger) {
 		try {
-			if (!this.callerEnvironment.SUPABASE_URL || !this.callerEnvironment.SUPABASE_SERVICE_ROLE_KEY) {
-				this.logger.log('WARN', 'Supabase not configured, cannot get user webhook events');
+			if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+				logger.log('WARN', 'Supabase not configured, cannot get user webhook events');
 				return [];
 			}
 
-			const supabase = DatabaseUtils.getSupabaseAdminClient(this.callerEnvironment);
+			const supabase = DatabaseUtils.getSupabaseAdminClient(env);
 			const { limit = 50, offset = 0, eventType = null } = options;
 
 			let query = supabase
@@ -256,7 +302,7 @@ export class DatabaseUtils {
 			const { data: events, error } = await query;
 
 			if (error) {
-				this.logger.log('ERROR', 'Failed to get user webhook events', {
+				logger.log('ERROR', 'Failed to get user webhook events', {
 					error: error.message,
 					userId: userId
 				});
@@ -265,7 +311,7 @@ export class DatabaseUtils {
 
 			return events || [];
 		} catch (error) {
-			this.logger.log('ERROR', 'Error getting user webhook events', {
+			logger.log('ERROR', 'Error getting user webhook events', {
 				error: error.message,
 				userId: userId
 			});

@@ -175,7 +175,6 @@ export default class extends WorkerEntrypoint {
 
 	async sendFax(request, caller_env, sagContext) {
 		try {
-			
 			// Ensure we have usable objects regardless of whether inputs are strings
 			const callerEnvObj = typeof caller_env === 'string' ? JSON.parse(caller_env || '{}') : (caller_env || {});
 			const sagContextObj = typeof sagContext === 'string' ? JSON.parse(sagContext || '{}') : (sagContext || {});
@@ -256,17 +255,17 @@ export default class extends WorkerEntrypoint {
 	}
 
 	async debug(request, caller_env = "{}", sagContext = "{}") {
-		console.log("[FAX-SERVICE][DEBUG] Caller Environment:", callerEnvObj);
-		console.log("[FAX-SERVICE][DEBUG] SAG Context:", sagObj);
+		console.log("[FAX-SERVICE][DEBUG] Caller Environment:", caller_env);
+		console.log("[FAX-SERVICE][DEBUG] SAG Context:", sagContext);
 		console.log("[FAX-SERVICE][DEBUG] Service Environment:", this.env);
 
 		return {
 			statusCode: 200,
 			message: "Debug information logged successfully",
 			data: {
-				callerEnvObj: caller_env,
-				sagContext: sagContext,
-				env: this.env,
+				callerEnv: JSON.stringify(caller_env),
+				sagContext: JSON.stringify(sagContext),
+				env: JSON.stringify(this.env),
 				timestamp: new Date().toISOString()
 			}
 		};

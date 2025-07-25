@@ -11,12 +11,10 @@ export default class extends WorkerEntrypoint {
 		super(ctx, env);
 		this.logger = null;
 		this.env = env;
-		this.initializeLogger(env);
+		this.initializeLogger(this.env);
 	}
 
 	async fetch(request, env) {
-		this.initializeLogger(env);
-		this.logger.log('INFO', 'Fetch request received');
 		return new Response("Hello from RevenueCat Service");
 	}
 
@@ -54,11 +52,10 @@ export default class extends WorkerEntrypoint {
 	async webhook(request, caller_env, sagContext) {
 		try {
 			this.logger.log('INFO', 'RevenueCat webhook received');
-			
-			// Parse caller environment variables
-			const callerEnvironment = JSON.parse(caller_env);
-			const context = JSON.parse(sagContext);
-			
+			// Ensure we have usable objects regardless of whether inputs are strings
+			const callerEnvObj = typeof caller_env === 'string' ? JSON.parse(caller_env || '{}') : (caller_env || {});
+			const sagContextObj = typeof sagContext === 'string' ? JSON.parse(sagContext || '{}') : (sagContext || {});
+
 			// Parse request body
 			const webhookData = await this.parseRequestBody(request);
 			if (!webhookData) {
@@ -72,7 +69,7 @@ export default class extends WorkerEntrypoint {
 			this.logger.log('DEBUG', 'Webhook data received', webhookData);
 
 			// Verify webhook signature if secret is provided
-			const webhookSecret = callerEnvironment.REVENUECAT_WEBHOOK_SECRET;
+			const webhookSecret = callerEnvObj.REVENUECAT_WEBHOOK_SECRET;
 			if (webhookSecret) {
 				const authorization = request.headers.get('authorization');
 				if (!authorization) {
@@ -108,35 +105,38 @@ export default class extends WorkerEntrypoint {
 			// Handle different event types
 			switch (eventType) {
 				case 'INITIAL_PURCHASE':
-					await this.handleInitialPurchase(webhookData, callerEnvironment);
+					await this.handleInitialPurchase(webhookData, callerEnvObj);
 					break;
 				case 'RENEWAL':
-					await this.handleRenewal(webhookData, callerEnvironment);
+					await this.handleRenewal(webhookData, callerEnvObj);
 					break;
 				case 'CANCELLATION':
-					await this.handleCancellation(webhookData, callerEnvironment);
+					await this.handleCancellation(webhookData, callerEnvObj);
 					break;
 				case 'UNCANCELLATION':
-					await this.handleUncancellation(webhookData, callerEnvironment);
+					await this.handleUncancellation(webhookData, callerEnvObj);
 					break;
 				case 'NON_RENEWING_PURCHASE':
-					await this.handleNonRenewingPurchase(webhookData, callerEnvironment);
+					await this.handleNonRenewingPurchase(webhookData, callerEnvObj);
 					break;
 				case 'EXPIRATION':
-					await this.handleExpiration(webhookData, callerEnvironment);
+					await this.handleExpiration(webhookData, callerEnvObj);
 					break;
 				case 'BILLING_ISSUE':
-					await this.handleBillingIssue(webhookData, callerEnvironment);
+					await this.handleBillingIssue(webhookData, callerEnvObj);
 					break;
 				case 'PRODUCT_CHANGE':
-					await this.handleProductChange(webhookData, callerEnvironment);
+					await this.handleProductChange(webhookData, callerEnvObj);
 					break;
 				default:
 					this.logger.log('WARN', `Unhandled event type: ${eventType}`);
 			}
 
 			// Store webhook event in database
-			await this.storeWebhookEvent(webhookData, callerEnvironment);
+			await DatabaseUtils.storeRevenueCatWebhookEvent(webhookData, callerEnvObj, this.logger);
+
+			// Update user subscription status if applicable
+			await this.updateUserSubscriptionStatus(webhookData, callerEnvObj);
 
 			return new Response(JSON.stringify({ success: true }), {
 				status: 200,
@@ -157,7 +157,7 @@ export default class extends WorkerEntrypoint {
 	/**
 	 * Handle initial purchase events
 	 */
-	async handleInitialPurchase(webhookData, callerEnvironment) {
+	async handleInitialPurchase(webhookData, callerEnvObj) {
 		this.logger.log('INFO', 'Handling initial purchase', webhookData.event);
 		// Implement initial purchase logic
 		// Update user subscription status, grant access to premium features, etc.
@@ -166,7 +166,7 @@ export default class extends WorkerEntrypoint {
 	/**
 	 * Handle renewal events
 	 */
-	async handleRenewal(webhookData, callerEnvironment) {
+	async handleRenewal(webhookData, callerEnvObj) {
 		this.logger.log('INFO', 'Handling renewal', webhookData.event);
 		// Implement renewal logic
 	}
@@ -174,7 +174,7 @@ export default class extends WorkerEntrypoint {
 	/**
 	 * Handle cancellation events
 	 */
-	async handleCancellation(webhookData, callerEnvironment) {
+	async handleCancellation(webhookData, callerEnvObj) {
 		this.logger.log('INFO', 'Handling cancellation', webhookData.event);
 		// Implement cancellation logic
 		// Revoke access to premium features, etc.
@@ -183,7 +183,7 @@ export default class extends WorkerEntrypoint {
 	/**
 	 * Handle uncancellation events
 	 */
-	async handleUncancellation(webhookData, callerEnvironment) {
+		async handleUncancellation(webhookData, callerEnvObj) {
 		this.logger.log('INFO', 'Handling uncancellation', webhookData.event);
 		// Implement uncancellation logic
 	}
@@ -191,7 +191,7 @@ export default class extends WorkerEntrypoint {
 	/**
 	 * Handle non-renewing purchase events
 	 */
-	async handleNonRenewingPurchase(webhookData, callerEnvironment) {
+	async handleNonRenewingPurchase(webhookData, callerEnvObj) {
 		this.logger.log('INFO', 'Handling non-renewing purchase', webhookData.event);
 		// Implement non-renewing purchase logic
 	}
@@ -199,7 +199,7 @@ export default class extends WorkerEntrypoint {
 	/**
 	 * Handle expiration events
 	 */
-	async handleExpiration(webhookData, callerEnvironment) {
+	async handleExpiration(webhookData, callerEnvObj) {
 		this.logger.log('INFO', 'Handling expiration', webhookData.event);
 		// Implement expiration logic
 	}
@@ -207,7 +207,7 @@ export default class extends WorkerEntrypoint {
 	/**
 	 * Handle billing issue events
 	 */
-	async handleBillingIssue(webhookData, callerEnvironment) {
+	async handleBillingIssue(webhookData, callerEnvObj) {
 		this.logger.log('INFO', 'Handling billing issue', webhookData.event);
 		// Implement billing issue logic
 	}
@@ -215,56 +215,48 @@ export default class extends WorkerEntrypoint {
 	/**
 	 * Handle product change events
 	 */
-	async handleProductChange(webhookData, callerEnvironment) {
+	async handleProductChange(webhookData, callerEnvObj) {
 		this.logger.log('INFO', 'Handling product change', webhookData.event);
 		// Implement product change logic
 	}
 
 	/**
-	 * Store webhook event in database
+	 * Update user subscription status based on webhook event
 	 */
-	async storeWebhookEvent(webhookData, callerEnvironment) {
+	async updateUserSubscriptionStatus(webhookData, callerEnvObj) {
 		try {
-			const dbUtils = new DatabaseUtils(this.logger, callerEnvironment);
-			await dbUtils.storeRevenueCatWebhookEvent(webhookData);
-			this.logger.log('INFO', 'Webhook event stored in database');
+			await DatabaseUtils.updateUserSubscriptionStatus(webhookData, callerEnvObj, this.logger);
+			this.logger.log('INFO', 'User subscription status updated');
 		} catch (error) {
-			this.logger.log('ERROR', 'Error storing webhook event', error);
+			this.logger.log('ERROR', 'Error updating user subscription status', error);
 		}
 	}
 
 	/**
 	 * Health check endpoint
 	 */
-	async health(request, caller_env = "{}", sagContext = "{}") {
-		this.initializeLogger(JSON.parse(caller_env));
-		this.logger.log('INFO', 'Health check requested');
-		
-		return new Response(JSON.stringify({
-			status: 'healthy',
-			service: 'revenuecat',
-			timestamp: new Date().toISOString()
-		}), {
-			status: 200,
-			headers: { 'Content-Type': 'application/json' }
-		});
-	}
+	async health(request, caller_env, sagContext) {
+		try {
+			this.logger.log('INFO', 'Health check requested');
 
-	/**
-	 * Protected health check endpoint
-	 */
-	async healthProtected(request, caller_env = "{}", sagContext = "{}") {
-		this.initializeLogger(JSON.parse(caller_env));
-		this.logger.log('INFO', 'Protected health check requested');
-		
-		return new Response(JSON.stringify({
-			status: 'healthy',
-			service: 'revenuecat',
-			authenticated: true,
-			timestamp: new Date().toISOString()
-		}), {
-			status: 200,
-			headers: { 'Content-Type': 'application/json' }
-		});
+			return new Response(JSON.stringify({
+				status: 'healthy',
+				service: 'revenuecat',
+				callerEnv: JSON.stringify(caller_env),
+				sagContext: JSON.stringify(sagContext),
+				env: JSON.stringify(this.env),
+				timestamp: new Date().toISOString()
+			}), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			});
+		} catch (error) {
+			this.logger.log('ERROR', 'Error in health check', error);
+			return new Response(JSON.stringify({ error: 'Internal server error' }), {
+				status: 500,
+				error: error.message,
+				headers: { 'Content-Type': 'application/json' }
+			});
+		}
 	}
 } 

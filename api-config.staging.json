@@ -157,7 +157,7 @@
             "integration": {
                 "type": "service_binding",
                 "binding": "revenuecat_service",
-                "function": "healthProtected"
+                "function": "health"
             },
             "auth": true
         }
