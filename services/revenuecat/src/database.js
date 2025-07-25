@@ -10,9 +10,9 @@ export class DatabaseUtils {
 		if (!env.SUPABASE_SERVICE_ROLE_KEY) {
 			throw new Error('SUPABASE_SERVICE_ROLE_KEY is required for backend operations');
 		}
-		
+
 		console.log(`[DatabaseUtils] Creating Supabase admin client - Using SERVICE_ROLE key (RLS BYPASSED - Admin Access)`);
-		
+
 		return createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
 	}
 
@@ -79,7 +79,6 @@ export class DatabaseUtils {
 
 			let { data: storedEvent, error } = await supabase
 				.from('revenuecat_webhook_events')
-				.schema('private')
 				.insert(webhookRecord)
 				.select()
 				.single();
@@ -90,15 +89,14 @@ export class DatabaseUtils {
 					userId: userId,
 					eventType: webhookRecord.event_type
 				});
-				
+
 				webhookRecord.user_id = null;
 				const retryResult = await supabase
 					.from('revenuecat_webhook_events')
-					.schema('private')
 					.insert(webhookRecord)
 					.select()
 					.single();
-				
+
 				storedEvent = retryResult.data;
 				error = retryResult.error;
 			}
@@ -288,7 +286,6 @@ export class DatabaseUtils {
 
 			let query = supabase
 				.from('revenuecat_webhook_events')
-				.schema('private')
 				.select('*')
 				.eq('user_id', userId)
 				.order('processed_at', { ascending: false })
