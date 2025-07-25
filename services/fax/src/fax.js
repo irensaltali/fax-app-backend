@@ -14,6 +14,7 @@ export default class extends WorkerEntrypoint {
 		super(ctx, env);
 		this.logger = null;
 		this.env = env;
+		this.initializeLogger(env);
 	}
 
 	async fetch(request, env) {
@@ -174,7 +175,7 @@ export default class extends WorkerEntrypoint {
 
 	async sendFax(request, caller_env, sagContext) {
 		try {
-			this.initializeLogger(this.env);
+			
 			// Ensure we have usable objects regardless of whether inputs are strings
 			const callerEnvObj = typeof caller_env === 'string' ? JSON.parse(caller_env || '{}') : (caller_env || {});
 			const sagContextObj = typeof sagContext === 'string' ? JSON.parse(sagContext || '{}') : (sagContext || {});
@@ -273,7 +274,7 @@ export default class extends WorkerEntrypoint {
 
 	async health(request, caller_env, sagContext) {
 		try {
-			this.initializeLogger(this.env);
+			
 			this.logger.log('INFO', 'Health check request received');
 
 			return {
@@ -308,7 +309,7 @@ export default class extends WorkerEntrypoint {
 
 	async healthProtected(request, caller_env, sagContext) {
 		try {
-			this.initializeLogger(this.env);
+			
 			this.logger.log('INFO', 'Protected health check request received');
 
 			return {
@@ -345,7 +346,7 @@ export default class extends WorkerEntrypoint {
 
 	async uploadFilesToR2(request, caller_env, sagContext) {
 		try {
-			this.initializeLogger(this.env);
+			
 
 			this.logger.log('INFO', 'Upload-to-R2 debug endpoint called', {
 				method: request.method,
@@ -469,7 +470,7 @@ export default class extends WorkerEntrypoint {
 
 	async telnyxWebhook(request, caller_env = "{}", sagContext = "{}") {
 		try {
-			this.initializeLogger(this.env);
+			
 			// Ensure caller_env is an object for downstream DB utils
 			const callerEnvObj = typeof caller_env === 'string' ? JSON.parse(caller_env || '{}') : (caller_env || {});
 

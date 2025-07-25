@@ -11,6 +11,7 @@ export default class extends WorkerEntrypoint {
 		super(ctx, env);
 		this.logger = null;
 		this.env = env;
+		this.initializeLogger(env);
 	}
 
 	async fetch(request, env) {
@@ -50,7 +51,7 @@ export default class extends WorkerEntrypoint {
 	 * @param {string} sagContext - Serverless API Gateway context
 	 * @returns {Promise<Response>}
 	 */
-	async webhook(request, caller_env = "{}", sagContext = "{}") {
+	async webhook(request, caller_env, sagContext) {
 		try {
 			this.logger.log('INFO', 'RevenueCat webhook received');
 			
