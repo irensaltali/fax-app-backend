@@ -1,5 +1,6 @@
 -- Create RevenueCat webhook events table
-CREATE TABLE IF NOT EXISTS revenuecat_webhook_events (
+-- This table stores webhook events from RevenueCat for subscription management
+CREATE TABLE IF NOT EXISTS private.revenuecat_webhook_events (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     event_type TEXT NOT NULL,
     event_id TEXT,
@@ -30,55 +31,53 @@ CREATE TABLE IF NOT EXISTS revenuecat_webhook_events (
 );
 
 -- Create indexes for better query performance
-CREATE INDEX IF NOT EXISTS idx_revenuecat_webhook_events_user_id ON revenuecat_webhook_events(user_id);
-CREATE INDEX IF NOT EXISTS idx_revenuecat_webhook_events_event_type ON revenuecat_webhook_events(event_type);
-CREATE INDEX IF NOT EXISTS idx_revenuecat_webhook_events_processed_at ON revenuecat_webhook_events(processed_at);
-CREATE INDEX IF NOT EXISTS idx_revenuecat_webhook_events_subscription_id ON revenuecat_webhook_events(subscription_id);
-CREATE INDEX IF NOT EXISTS idx_revenuecat_webhook_events_event_id ON revenuecat_webhook_events(event_id);
+CREATE INDEX IF NOT EXISTS idx_revenuecat_webhook_events_user_id ON private.revenuecat_webhook_events(user_id);
+CREATE INDEX IF NOT EXISTS idx_revenuecat_webhook_events_event_type ON private.revenuecat_webhook_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_revenuecat_webhook_events_processed_at ON private.revenuecat_webhook_events(processed_at);
+CREATE INDEX IF NOT EXISTS idx_revenuecat_webhook_events_subscription_id ON private.revenuecat_webhook_events(subscription_id);
+CREATE INDEX IF NOT EXISTS idx_revenuecat_webhook_events_event_id ON private.revenuecat_webhook_events(event_id);
 
--- Add subscription-related columns to profiles table if they don't exist
-DO $$ 
+-- Create a function to handle webhook events for non-existent users
+CREATE OR REPLACE FUNCTION handle_revenuecat_webhook_for_unknown_user()
+RETURNS TRIGGER AS $$
 BEGIN
-    -- Add subscription_status column if it doesn't exist
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'profiles' AND column_name = 'subscription_status') THEN
-        ALTER TABLE profiles ADD COLUMN subscription_status TEXT DEFAULT 'none';
+    -- If this is a test event, allow it
+    IF NEW.event_type = 'TEST' THEN
+        RETURN NEW;
     END IF;
-
-    -- Add subscription_product_id column if it doesn't exist
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'profiles' AND column_name = 'subscription_product_id') THEN
-        ALTER TABLE profiles ADD COLUMN subscription_product_id TEXT;
+    
+    -- For other events, if user_id is null, log it but allow the insert
+    IF NEW.user_id IS NULL THEN
+        -- Log that we received a webhook for an unknown user
+        -- This could be used to create a user record later if needed
+        RAISE LOG 'RevenueCat webhook received for unknown user: event_type=%, original_app_user_id=%', 
+            NEW.event_type, NEW.original_app_user_id;
     END IF;
+    
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
-    -- Add subscription_expires_at column if it doesn't exist
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'profiles' AND column_name = 'subscription_expires_at') THEN
-        ALTER TABLE profiles ADD COLUMN subscription_expires_at TIMESTAMPTZ;
-    END IF;
+-- Create trigger to handle webhook events for unknown users
+DROP TRIGGER IF EXISTS handle_revenuecat_webhook_unknown_user ON private.revenuecat_webhook_events;
+CREATE TRIGGER handle_revenuecat_webhook_unknown_user
+    BEFORE INSERT ON private.revenuecat_webhook_events
+    FOR EACH ROW EXECUTE FUNCTION handle_revenuecat_webhook_for_unknown_user();
 
-    -- Add subscription_purchased_at column if it doesn't exist
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'profiles' AND column_name = 'subscription_purchased_at') THEN
-        ALTER TABLE profiles ADD COLUMN subscription_purchased_at TIMESTAMPTZ;
-    END IF;
+-- Enable Row Level Security on the table
+ALTER TABLE private.revenuecat_webhook_events ENABLE ROW LEVEL SECURITY;
 
-    -- Add subscription_store column if it doesn't exist
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'profiles' AND column_name = 'subscription_store') THEN
-        ALTER TABLE profiles ADD COLUMN subscription_store TEXT;
-    END IF;
+-- Create a restrictive policy that denies all access except for service role (admin)
+CREATE POLICY "Admin only access to revenuecat_webhook_events" 
+ON private.revenuecat_webhook_events 
+FOR ALL 
+TO authenticated, anon 
+USING (false);
 
-    -- Add subscription_environment column if it doesn't exist
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'profiles' AND column_name = 'subscription_environment') THEN
-        ALTER TABLE profiles ADD COLUMN subscription_environment TEXT;
-    END IF;
-END $$;
+-- Create a policy for service role
+CREATE POLICY "Service role full access" 
+ON private.revenuecat_webhook_events 
+FOR ALL 
+TO service_role 
+USING (true) WITH CHECK (true);
 
--- Create indexes for profiles table subscription columns
-CREATE INDEX IF NOT EXISTS idx_profiles_subscription_status ON profiles(subscription_status);
-CREATE INDEX IF NOT EXISTS idx_profiles_subscription_product_id ON profiles(subscription_product_id);
-
--- Add RLS policies for profiles table subscription columns
--- Users can view their own subscription data
-CREATE POLICY "Users can view their own subscription data" ON profiles
-    FOR SELECT USING (auth.uid() = id);
-
--- Service role can manage all subscription data
-CREATE POLICY "Service role can manage all subscription data" ON profiles
-    FOR ALL USING (auth.role() = 'service_role'); 

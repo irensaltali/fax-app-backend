@@ -42,39 +42,31 @@ export class DatabaseUtils {
 			// For webhook events, we'll try to use the user_id if provided
 			// If the user doesn't exist, we'll handle the foreign key constraint error gracefully
 			let userId = event.app_user_id || event.original_app_user_id;
-			
-			// For TEST events, always set user_id to null
-			if (event.type === 'TEST') {
-				userId = null;
-				logger.log('INFO', 'Setting user_id to null for TEST event', {
-					eventType: event.type,
-					originalUserId: event.app_user_id || event.original_app_user_id
-				});
-			}
 
+			// Sanitize and validate data before insertion
 			const webhookRecord = {
-				event_type: event.type,
-				event_id: event.id,
+				event_type: event.type || 'UNKNOWN',
+				event_id: event.id || null,
 				user_id: userId,
-				product_id: event.product_id,
-				subscription_id: event.subscription_id,
-				entitlement_id: event.entitlement_id,
-				period_type: event.period_type,
+				product_id: event.product_id || null,
+				subscription_id: event.subscription_id || null,
+				entitlement_id: event.entitlement_id || null,
+				period_type: event.period_type || null,
 				purchased_at: event.purchased_at_ms ? new Date(parseInt(event.purchased_at_ms)).toISOString() : null,
 				expires_at: event.expires_at_ms ? new Date(parseInt(event.expires_at_ms)).toISOString() : null,
-				environment: event.environment,
-				store: event.store,
-				is_trial_conversion: event.is_trial_conversion || false,
-				price: event.price,
-				currency: event.currency,
-				country_code: event.country_code,
-				app_id: event.app_id,
-				original_app_user_id: event.original_app_user_id,
-				aliases: user.aliases || [],
-				attributes: user.attributes || {},
-				product_identifier: product.product_identifier,
-				product_title: product.title,
-				product_description: product.description,
+				environment: event.environment || null,
+				store: event.store || null,
+				is_trial_conversion: Boolean(event.is_trial_conversion) || false,
+				price: event.price ? parseFloat(event.price) : null,
+				currency: event.currency || null,
+				country_code: event.country_code || null,
+				app_id: event.app_id || null,
+				original_app_user_id: event.original_app_user_id || null,
+				aliases: Array.isArray(user.aliases) ? user.aliases : [],
+				attributes: user.attributes && typeof user.attributes === 'object' ? user.attributes : {},
+				product_identifier: product.product_identifier || null,
+				product_title: product.title || null,
+				product_description: product.description || null,
 				raw_data: webhookData,
 				processed_at: new Date().toISOString()
 			};
@@ -87,6 +79,7 @@ export class DatabaseUtils {
 
 			let { data: storedEvent, error } = await supabase
 				.from('revenuecat_webhook_events')
+				.schema('private')
 				.insert(webhookRecord)
 				.select()
 				.single();
@@ -101,6 +94,7 @@ export class DatabaseUtils {
 				webhookRecord.user_id = null;
 				const retryResult = await supabase
 					.from('revenuecat_webhook_events')
+					.schema('private')
 					.insert(webhookRecord)
 					.select()
 					.single();
@@ -113,7 +107,10 @@ export class DatabaseUtils {
 				logger.log('ERROR', 'Failed to store RevenueCat webhook event', {
 					error: error.message,
 					code: error.code,
-					eventType: webhookRecord.event_type
+					details: error.details,
+					hint: error.hint,
+					eventType: webhookRecord.event_type,
+					userId: webhookRecord.user_id
 				});
 				throw error;
 			}
@@ -128,6 +125,7 @@ export class DatabaseUtils {
 		} catch (error) {
 			logger.log('ERROR', 'Error storing RevenueCat webhook event', {
 				error: error.message,
+				stack: error.stack,
 				eventType: webhookData?.event?.type
 			});
 			return null;
@@ -290,6 +288,7 @@ export class DatabaseUtils {
 
 			let query = supabase
 				.from('revenuecat_webhook_events')
+				.schema('private')
 				.select('*')
 				.eq('user_id', userId)
 				.order('processed_at', { ascending: false })
