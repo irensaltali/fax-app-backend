@@ -232,4 +232,62 @@ export class DatabaseUtils {
 			return null;
 		}
 	}
+
+	static async recordUsage(usageData, env, logger) {
+		try {
+			if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+				logger.log('WARN', 'Supabase not configured, skipping usage recording');
+				return null;
+			}
+
+			const supabase = this.getSupabaseAdminClient(env);
+
+			const usageRecord = {
+				user_id: usageData.userId,
+				type: usageData.type,
+				unit_type: usageData.unitType,
+				usage_amount: usageData.usageAmount,
+				timestamp: usageData.timestamp || new Date().toISOString(),
+				metadata: usageData.metadata || {}
+			};
+
+			logger.log('DEBUG', 'Recording usage', {
+				userId: usageData.userId,
+				type: usageData.type,
+				unitType: usageData.unitType,
+				usageAmount: usageData.usageAmount
+			});
+
+			const { data, error } = await supabase
+				.from('usage')
+				.insert(usageRecord)
+				.select()
+				.single();
+
+			if (error) {
+				logger.log('ERROR', 'Failed to record usage', {
+					error: error.message,
+					usageData
+				});
+				return null;
+			}
+
+			logger.log('INFO', 'Usage recorded successfully', {
+				usageId: data.id,
+				userId: data.user_id,
+				type: data.type,
+				usageAmount: data.usage_amount
+			});
+
+			return data;
+		} catch (error) {
+			logger.log('ERROR', 'Error recording usage', {
+				error: error.message,
+				usageData
+			});
+			return null;
+		}
+	}
+
+
 } 

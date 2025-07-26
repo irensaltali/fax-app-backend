@@ -513,7 +513,7 @@ export default class extends WorkerEntrypoint {
 			}
 
 			// Update fax record using provider_fax_id as lookup key
-			await DatabaseUtils.updateFaxRecord(telnyxFaxId, updateData, callerEnvObj, this.logger, 'provider_fax_id');
+			const updatedFaxRecord = await DatabaseUtils.updateFaxRecord(telnyxFaxId, updateData, callerEnvObj, this.logger, 'provider_fax_id');
 
 			// Store webhook event for audit/logging
 			await DatabaseUtils.storeWebhookEvent({
@@ -522,6 +522,25 @@ export default class extends WorkerEntrypoint {
 				processedData: updateData,
 				rawPayload: body
 			}, callerEnvObj, this.logger);
+
+			// Record usage if fax was successfully delivered
+			if (standardizedStatus === 'delivered' && updatedFaxRecord && updatedFaxRecord.user_id) {
+				const finalPageCount = pageCount || updatedFaxRecord.pages || 1;
+				
+				await DatabaseUtils.recordUsage({
+					userId: updatedFaxRecord.user_id,
+					type: 'fax',
+					unitType: 'page',
+					usageAmount: finalPageCount,
+					timestamp: new Date().toISOString(),
+					metadata: {
+						fax_id: telnyxFaxId,
+						provider: 'telnyx',
+						event_type: eventType,
+						status: standardizedStatus
+					}
+				}, callerEnvObj, this.logger);
+			}
 
 			this.logger.log('INFO', 'Telnyx webhook processed successfully', { 
 				telnyxFaxId, 
@@ -542,6 +561,127 @@ export default class extends WorkerEntrypoint {
 		} catch (error) {
 			if (this.logger) {
 				this.logger.log('ERROR', 'Error processing Telnyx webhook', {
+					error: error.message,
+					stack: error.stack
+				});
+			}
+			return {
+				statusCode: 500,
+				error: 'Webhook processing failed',
+				message: error.message
+			};
+		}
+	}
+
+	async notifyreWebhook(request, caller_env = "{}", sagContext = "{}") {
+		try {
+			// Ensure caller_env is an object for downstream DB utils
+			const callerEnvObj = typeof caller_env === 'string' ? JSON.parse(caller_env || '{}') : (caller_env || {});
+
+			this.logger.log('INFO', 'Notifyre webhook received');
+
+			// Parse JSON body safely
+			const body = await request.json();
+
+			const eventType = body?.event || 'unknown';
+			const payload = body?.data || {};
+			const notifyreFaxId = payload.id || null;
+			const statusFromPayload = payload.status || null;
+			const pageCount = payload.pages || null;
+			const userId = payload.user_id || null;
+
+			if (!notifyreFaxId) {
+				this.logger.log('ERROR', 'Notifyre webhook missing fax id in payload');
+				return { statusCode: 400, error: 'Invalid webhook payload: missing fax id' };
+			}
+
+			// Map Notifyre status to standardized status
+			let standardizedStatus = 'queued';
+			switch (statusFromPayload?.toLowerCase()) {
+				case 'sent':
+				case 'delivered':
+					standardizedStatus = 'delivered';
+					break;
+				case 'failed':
+				case 'error':
+					standardizedStatus = 'failed';
+					break;
+				case 'cancelled':
+					standardizedStatus = 'cancelled';
+					break;
+				case 'processing':
+					standardizedStatus = 'processing';
+					break;
+				default:
+					standardizedStatus = statusFromPayload || 'queued';
+			}
+
+			// Build update data for Supabase
+			const updateData = {
+				status: standardizedStatus,
+				original_status: statusFromPayload,
+				metadata: payload,
+				completed_at: ['delivered', 'failed', 'cancelled'].includes(standardizedStatus) ? new Date().toISOString() : null
+			};
+
+			// Add page count if available in the webhook payload
+			if (pageCount !== null && pageCount !== undefined) {
+				updateData.pages = pageCount;
+				this.logger.log('DEBUG', 'Page count included in webhook update', { 
+					notifyreFaxId, 
+					pageCount 
+				});
+			}
+
+			// Update fax record using provider_fax_id as lookup key
+			const updatedFaxRecord = await DatabaseUtils.updateFaxRecord(notifyreFaxId, updateData, callerEnvObj, this.logger, 'provider_fax_id');
+
+			// Store webhook event for audit/logging
+			await DatabaseUtils.storeWebhookEvent({
+				event: eventType,
+				faxId: notifyreFaxId,
+				processedData: updateData,
+				rawPayload: body
+			}, callerEnvObj, this.logger);
+
+			// Record usage if fax was successfully delivered
+			if (standardizedStatus === 'delivered' && updatedFaxRecord && updatedFaxRecord.user_id) {
+				const finalPageCount = pageCount || updatedFaxRecord.pages || 1;
+				
+				await DatabaseUtils.recordUsage({
+					userId: updatedFaxRecord.user_id,
+					type: 'fax',
+					unitType: 'page',
+					usageAmount: finalPageCount,
+					timestamp: new Date().toISOString(),
+					metadata: {
+						fax_id: notifyreFaxId,
+						provider: 'notifyre',
+						event_type: eventType,
+						status: standardizedStatus
+					}
+				}, callerEnvObj, this.logger);
+			}
+
+			this.logger.log('INFO', 'Notifyre webhook processed successfully', { 
+				notifyreFaxId, 
+				eventType,
+				pageCount: pageCount || 'not provided'
+			});
+
+			return {
+				statusCode: 200,
+				message: 'Webhook processed successfully',
+				data: {
+					faxId: notifyreFaxId,
+					standardizedStatus,
+					timestamp: new Date().toISOString()
+				}
+			};
+
+		} catch (error) {
+			if (this.logger) {
+				this.logger.log('ERROR', 'Error processing Notifyre webhook', {
 					error: error.message,
 					stack: error.stack
 				});
