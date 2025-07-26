@@ -122,7 +122,7 @@ export class RevenueCatUtils {
 
 		const event = webhookData.event;
 		return {
-			userId: event.app_user_id || event.original_app_user_id,
+			userId: event.original_app_user_id,
 			productId: event.product_id,
 			periodType: event.period_type,
 			purchasedAt: event.purchased_at_ms,
@@ -143,9 +143,17 @@ export class RevenueCatUtils {
 		}
 
 		const event = webhookData.event;
+		
+		// Handle entitlement_id - check both single value and array
+		let entitlementId = null;
+		if (event.entitlement_id) {
+			entitlementId = event.entitlement_id;
+		} else if (event.entitlement_ids && Array.isArray(event.entitlement_ids) && event.entitlement_ids.length > 0) {
+			entitlementId = event.entitlement_ids[0]; // Use first entitlement_id from array
+		}
+
 		return {
-			subscriptionId: event.subscription_id,
-			entitlementId: event.entitlement_id,
+			entitlementId: entitlementId,
 			productId: event.product_id,
 			periodType: event.period_type,
 			purchasedAt: event.purchased_at_ms,
@@ -199,8 +207,8 @@ export class RevenueCatUtils {
 				event.app_user_id = event.app_user_id.substring(0, 8) + '...';
 			}
 			
-			if (event.subscription_id) {
-				event.subscription_id = event.subscription_id.substring(0, 8) + '...';
+			if (event.original_app_user_id) {
+				event.original_app_user_id = event.original_app_user_id.substring(0, 8) + '...';
 			}
 
 			sanitized.event = event;

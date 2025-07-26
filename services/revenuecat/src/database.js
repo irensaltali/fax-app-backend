@@ -36,12 +36,17 @@ export class DatabaseUtils {
 
 			// Extract relevant information from webhook data
 			const event = webhookData.event || {};
-			const user = webhookData.user || {};
-			const product = webhookData.product || {};
 
-			// For webhook events, we'll try to use the user_id if provided
-			// If the user doesn't exist, we'll handle the foreign key constraint error gracefully
-			let userId = event.app_user_id || event.original_app_user_id;
+			// Use original_app_user_id as the user_id for foreign key connection to auth.users
+			let userId = event.original_app_user_id;
+
+			// Handle entitlement_id - check both single value and array
+			let entitlementId = null;
+			if (event.entitlement_id) {
+				entitlementId = event.entitlement_id;
+			} else if (event.entitlement_ids && Array.isArray(event.entitlement_ids) && event.entitlement_ids.length > 0) {
+				entitlementId = event.entitlement_ids[0]; // Use first entitlement_id from array
+			}
 
 			// Sanitize and validate data before insertion
 			const webhookRecord = {
@@ -49,8 +54,7 @@ export class DatabaseUtils {
 				event_id: event.id || null,
 				user_id: userId,
 				product_id: event.product_id || null,
-				subscription_id: event.subscription_id || null,
-				entitlement_id: event.entitlement_id || null,
+				entitlement_id: entitlementId,
 				period_type: event.period_type || null,
 				purchased_at: event.purchased_at_ms ? new Date(parseInt(event.purchased_at_ms)).toISOString() : null,
 				expires_at: event.expires_at_ms ? new Date(parseInt(event.expires_at_ms)).toISOString() : null,
@@ -61,12 +65,6 @@ export class DatabaseUtils {
 				currency: event.currency || null,
 				country_code: event.country_code || null,
 				app_id: event.app_id || null,
-				original_app_user_id: event.original_app_user_id || null,
-				aliases: Array.isArray(user.aliases) ? user.aliases : [],
-				attributes: user.attributes && typeof user.attributes === 'object' ? user.attributes : {},
-				product_identifier: product.product_identifier || null,
-				product_title: product.title || null,
-				product_description: product.description || null,
 				raw_data: webhookData,
 				processed_at: new Date().toISOString()
 			};
@@ -137,7 +135,7 @@ export class DatabaseUtils {
 	 * @param {Object} logger - Logger instance
 	 * @returns {Promise<Object|null>} - The updated user record or null if failed
 	 */
-	static async updateUserSubscriptionStatus(webhookData, env, logger) {
+			static async updateUserSubscriptionStatus(webhookData, env, logger) {
 		try {
 			if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
 				logger.log('WARN', 'Supabase not configured, skipping user subscription update');
@@ -147,15 +145,17 @@ export class DatabaseUtils {
 			const supabase = DatabaseUtils.getSupabaseAdminClient(env);
 			const event = webhookData.event || {};
 
-			if (!event.app_user_id) {
-				logger.log('WARN', 'No user ID in webhook data, skipping subscription update');
+			// Use original_app_user_id for user identification
+			const userId = event.original_app_user_id;
+			if (!userId) {
+				logger.log('WARN', 'No original_app_user_id in webhook data, skipping subscription update');
 				return null;
 			}
 
 			// Skip subscription updates for TEST events
 			if (event.type === 'TEST') {
 				logger.log('INFO', 'Skipping subscription update for TEST event', {
-					userId: event.app_user_id,
+					userId: userId,
 					eventType: event.type
 				});
 				return null;
@@ -191,7 +191,7 @@ export class DatabaseUtils {
 			};
 
 			logger.log('DEBUG', 'Updating user subscription status', {
-				userId: event.app_user_id,
+				userId: userId,
 				status: subscriptionStatus,
 				productId: event.product_id
 			});
@@ -199,14 +199,14 @@ export class DatabaseUtils {
 			const { data: updatedUser, error } = await supabase
 				.from('profiles')
 				.update(updateData)
-				.eq('id', event.app_user_id)
+				.eq('id', userId)
 				.select()
 				.single();
 
 			if (error) {
 				logger.log('ERROR', 'Failed to update user subscription status', {
 					error: error.message,
-					userId: event.app_user_id
+					userId: userId
 				});
 				throw error;
 			}
@@ -220,7 +220,7 @@ export class DatabaseUtils {
 		} catch (error) {
 			logger.log('ERROR', 'Error updating user subscription status', {
 				error: error.message,
-				userId: webhookData?.event?.app_user_id
+				userId: webhookData?.event?.original_app_user_id
 			});
 			return null;
 		}
