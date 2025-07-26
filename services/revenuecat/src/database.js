@@ -135,6 +135,66 @@ export class DatabaseUtils {
 				userId: storedEvent.user_id
 			});
 
+			// Also create/update user subscription if this is a purchase event
+			if (['INITIAL_PURCHASE', 'RENEWAL', 'UNCANCELLATION'].includes(event.type) && userId && event.product_id) {
+				try {
+					// Get product information to determine page limit
+					const product = await DatabaseUtils.getProductById(event.product_id, env, logger);
+					if (product) {
+						const subscriptionData = {
+							userId: userId,
+							productId: event.product_id,
+							subscriptionId: event.subscription_id,
+							entitlementId: entitlementId,
+							purchasedAt: event.purchased_at_ms ? new Date(parseInt(event.purchased_at_ms)).toISOString() : new Date().toISOString(),
+							expiresAt: expiresAt,
+							pageLimit: product.page_limit || 0
+						};
+
+						const userSubscription = await DatabaseUtils.createOrUpdateUserSubscription(subscriptionData, env, logger);
+						if (userSubscription) {
+							logger.log('INFO', 'User subscription created/updated from webhook', {
+								userId: userId,
+								productId: event.product_id,
+								subscriptionId: userSubscription.id
+							});
+						}
+					}
+				} catch (subscriptionError) {
+					logger.log('ERROR', 'Failed to create/update user subscription from webhook', {
+						error: subscriptionError.message,
+						userId: userId,
+						productId: event.product_id
+					});
+				}
+			}
+
+			// Deactivate user subscription if this is a cancellation or expiration event
+			if (['CANCELLATION', 'EXPIRATION'].includes(event.type) && userId && event.product_id) {
+				try {
+					// Find the active subscription for this user and product
+					const userSubscriptions = await DatabaseUtils.getUserSubscriptions(userId, { activeOnly: true }, env, logger);
+					const subscriptionToDeactivate = userSubscriptions.find(sub => 
+						sub.product_id === event.product_id && sub.is_active
+					);
+
+					if (subscriptionToDeactivate) {
+						await DatabaseUtils.deactivateUserSubscription(subscriptionToDeactivate.id, env, logger);
+						logger.log('INFO', 'User subscription deactivated from webhook', {
+							userId: userId,
+							productId: event.product_id,
+							subscriptionId: subscriptionToDeactivate.id
+						});
+					}
+				} catch (deactivationError) {
+					logger.log('ERROR', 'Failed to deactivate user subscription from webhook', {
+						error: deactivationError.message,
+						userId: userId,
+						productId: event.product_id
+					});
+				}
+			}
+
 			return storedEvent;
 		} catch (error) {
 			logger.log('ERROR', 'Error storing RevenueCat webhook event', {
@@ -408,6 +468,316 @@ export class DatabaseUtils {
 				productId: product?.product_id
 			});
 			// Return null to indicate calculation failure
+			return null;
+		}
+	}
+
+	/**
+	 * Create or update user subscription/package
+	 * @param {Object} subscriptionData - The subscription data
+	 * @param {Object} env - Environment variables
+	 * @param {Object} logger - Logger instance
+	 * @returns {Promise<Object|null>} - The created/updated subscription or null if failed
+	 */
+	static async createOrUpdateUserSubscription(subscriptionData, env, logger) {
+		try {
+			if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+				logger.log('WARN', 'Supabase not configured, cannot create/update user subscription');
+				return null;
+			}
+
+			const supabase = DatabaseUtils.getSupabaseAdminClient(env);
+			const {
+				userId,
+				productId,
+				subscriptionId,
+				entitlementId,
+				purchasedAt,
+				expiresAt,
+				pageLimit
+			} = subscriptionData;
+
+			// Validate required fields
+			if (!userId || !productId || !purchasedAt) {
+				logger.log('ERROR', 'Missing required fields for user subscription', {
+					userId: !!userId,
+					productId: !!productId,
+					purchasedAt: !!purchasedAt
+				});
+				return null;
+			}
+
+			// Get product information to determine if it's a subscription
+			const product = await DatabaseUtils.getProductById(productId, env, logger);
+			if (!product) {
+				logger.log('ERROR', 'Product not found for user subscription', {
+					productId: productId,
+					userId: userId
+				});
+				return null;
+			}
+
+			// For subscription type, we need to handle the unique constraint at application level
+			// since PostgreSQL doesn't support subqueries in index predicates
+			if (product.type === 'subscription') {
+				// Check if user already has a subscription
+				const { data: existingSubscriptions, error: checkError } = await supabase
+					.from('user_subscriptions')
+					.select(`
+						*,
+						products!inner(type)
+					`)
+					.eq('user_id', userId)
+					.eq('is_active', true)
+					.eq('products.type', 'subscription');
+
+				if (checkError) {
+					logger.log('ERROR', 'Failed to check existing subscription', {
+						error: checkError.message,
+						userId: userId
+					});
+					return null;
+				}
+
+				const existingSubscription = existingSubscriptions?.[0];
+
+				if (existingSubscription) {
+					// Update existing subscription
+					const updateData = {
+						product_id: productId,
+						subscription_id: subscriptionId,
+						entitlement_id: entitlementId,
+						purchased_at: purchasedAt,
+						expires_at: expiresAt,
+						page_limit: pageLimit || 0,
+						pages_used: 0, // Reset pages used for new subscription
+						updated_at: new Date().toISOString()
+					};
+
+					const { data: updatedSubscription, error: updateError } = await supabase
+						.from('user_subscriptions')
+						.update(updateData)
+						.eq('id', existingSubscription.id)
+						.select()
+						.single();
+
+					if (updateError) {
+						logger.log('ERROR', 'Failed to update existing subscription', {
+							error: updateError.message,
+							userId: userId,
+							subscriptionId: existingSubscription.id
+						});
+						return null;
+					}
+
+					logger.log('INFO', 'Updated existing subscription', {
+						userId: userId,
+						subscriptionId: updatedSubscription.id,
+						productId: productId
+					});
+
+					return updatedSubscription;
+				}
+			}
+
+			// Create new subscription/package
+			const newSubscriptionData = {
+				user_id: userId,
+				product_id: productId,
+				subscription_id: subscriptionId,
+				entitlement_id: entitlementId,
+				purchased_at: purchasedAt,
+				expires_at: expiresAt,
+				page_limit: pageLimit || 0,
+				pages_used: 0,
+				is_active: true
+			};
+
+			const { data: newSubscription, error: insertError } = await supabase
+				.from('user_subscriptions')
+				.insert(newSubscriptionData)
+				.select()
+				.single();
+
+			if (insertError) {
+				logger.log('ERROR', 'Failed to create new user subscription', {
+					error: insertError.message,
+					userId: userId,
+					productId: productId
+				});
+				return null;
+			}
+
+			logger.log('INFO', 'Created new user subscription', {
+				userId: userId,
+				subscriptionId: newSubscription.id,
+				productId: productId,
+				productType: product.type
+			});
+
+			return newSubscription;
+		} catch (error) {
+			logger.log('ERROR', 'Error creating/updating user subscription', {
+				error: error.message,
+				userId: subscriptionData?.userId
+			});
+			return null;
+		}
+	}
+
+	/**
+	 * Get user subscriptions
+	 * @param {string} userId - The user ID
+	 * @param {Object} options - Query options
+	 * @param {Object} env - Environment variables
+	 * @param {Object} logger - Logger instance
+	 * @returns {Promise<Array>} - Array of user subscriptions
+	 */
+	static async getUserSubscriptions(userId, options = {}, env, logger) {
+		try {
+			if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+				logger.log('WARN', 'Supabase not configured, cannot get user subscriptions');
+				return [];
+			}
+
+			const supabase = DatabaseUtils.getSupabaseAdminClient(env);
+			const { activeOnly = true, productType = null } = options;
+
+			let query = supabase
+				.from('user_subscriptions')
+				.select(`
+					*,
+					products (
+						product_id,
+						display_name,
+						description,
+						page_limit,
+						expire_days,
+						expire_period,
+						type
+					)
+				`)
+				.eq('user_id', userId)
+				.order('created_at', { ascending: false });
+
+			if (activeOnly) {
+				query = query.eq('is_active', true);
+			}
+
+			if (productType) {
+				query = query.eq('products.type', productType);
+			}
+
+			const { data: subscriptions, error } = await query;
+
+			if (error) {
+				logger.log('ERROR', 'Failed to get user subscriptions', {
+					error: error.message,
+					userId: userId
+				});
+				return [];
+			}
+
+			return subscriptions || [];
+		} catch (error) {
+			logger.log('ERROR', 'Error getting user subscriptions', {
+				error: error.message,
+				userId: userId
+			});
+			return [];
+		}
+	}
+
+	/**
+	 * Deactivate user subscription
+	 * @param {string} subscriptionId - The subscription ID
+	 * @param {Object} env - Environment variables
+	 * @param {Object} logger - Logger instance
+	 * @returns {Promise<Object|null>} - The deactivated subscription or null if failed
+	 */
+	static async deactivateUserSubscription(subscriptionId, env, logger) {
+		try {
+			if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+				logger.log('WARN', 'Supabase not configured, cannot deactivate user subscription');
+				return null;
+			}
+
+			const supabase = DatabaseUtils.getSupabaseAdminClient(env);
+
+			const { data: deactivatedSubscription, error } = await supabase
+				.from('user_subscriptions')
+				.update({ is_active: false })
+				.eq('id', subscriptionId)
+				.select()
+				.single();
+
+			if (error) {
+				logger.log('ERROR', 'Failed to deactivate user subscription', {
+					error: error.message,
+					subscriptionId: subscriptionId
+				});
+				return null;
+			}
+
+			logger.log('INFO', 'Deactivated user subscription', {
+				subscriptionId: subscriptionId,
+				userId: deactivatedSubscription.user_id
+			});
+
+			return deactivatedSubscription;
+		} catch (error) {
+			logger.log('ERROR', 'Error deactivating user subscription', {
+				error: error.message,
+				subscriptionId: subscriptionId
+			});
+			return null;
+		}
+	}
+
+	/**
+	 * Update pages used for a user subscription
+	 * @param {string} subscriptionId - The subscription ID
+	 * @param {number} pagesUsed - The number of pages used
+	 * @param {Object} env - Environment variables
+	 * @param {Object} logger - Logger instance
+	 * @returns {Promise<Object|null>} - The updated subscription or null if failed
+	 */
+	static async updatePagesUsed(subscriptionId, pagesUsed, env, logger) {
+		try {
+			if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+				logger.log('WARN', 'Supabase not configured, cannot update pages used');
+				return null;
+			}
+
+			const supabase = DatabaseUtils.getSupabaseAdminClient(env);
+
+			const { data: updatedSubscription, error } = await supabase
+				.from('user_subscriptions')
+				.update({ pages_used: pagesUsed })
+				.eq('id', subscriptionId)
+				.select()
+				.single();
+
+			if (error) {
+				logger.log('ERROR', 'Failed to update pages used', {
+					error: error.message,
+					subscriptionId: subscriptionId,
+					pagesUsed: pagesUsed
+				});
+				return null;
+			}
+
+			logger.log('INFO', 'Updated pages used', {
+				subscriptionId: subscriptionId,
+				pagesUsed: pagesUsed
+			});
+
+			return updatedSubscription;
+		} catch (error) {
+			logger.log('ERROR', 'Error updating pages used', {
+				error: error.message,
+				subscriptionId: subscriptionId
+			});
 			return null;
 		}
 	}

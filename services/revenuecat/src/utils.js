@@ -234,6 +234,92 @@ export class RevenueCatUtils {
 	}
 
 	/**
+	 * Check if a subscription is expired
+	 * @param {Object} subscription - The subscription object
+	 * @returns {boolean} - True if expired, false otherwise
+	 */
+	static isSubscriptionExpired(subscription) {
+		if (!subscription || !subscription.expires_at) {
+			return false; // No expiration date means it doesn't expire
+		}
+
+		const expirationDate = new Date(subscription.expires_at);
+		const now = new Date();
+
+		return expirationDate < now;
+	}
+
+	/**
+	 * Check if a subscription has remaining pages
+	 * @param {Object} subscription - The subscription object
+	 * @returns {boolean} - True if has remaining pages, false otherwise
+	 */
+	static hasRemainingPages(subscription) {
+		if (!subscription) {
+			return false;
+		}
+
+		// If page_limit is 0, it means unlimited pages
+		if (subscription.page_limit === 0) {
+			return true;
+		}
+
+		return subscription.pages_used < subscription.page_limit;
+	}
+
+	/**
+	 * Get remaining pages for a subscription
+	 * @param {Object} subscription - The subscription object
+	 * @returns {number} - Number of remaining pages, -1 for unlimited
+	 */
+	static getRemainingPages(subscription) {
+		if (!subscription) {
+			return 0;
+		}
+
+		// If page_limit is 0, it means unlimited pages
+		if (subscription.page_limit === 0) {
+			return -1; // -1 indicates unlimited
+		}
+
+		return Math.max(0, subscription.page_limit - subscription.pages_used);
+	}
+
+	/**
+	 * Validate subscription data
+	 * @param {Object} subscriptionData - The subscription data to validate
+	 * @returns {Object} - Validation result with isValid boolean and errors array
+	 */
+	static validateSubscriptionData(subscriptionData) {
+		const errors = [];
+
+		if (!subscriptionData.userId) {
+			errors.push('userId is required');
+		}
+
+		if (!subscriptionData.productId) {
+			errors.push('productId is required');
+		}
+
+		if (!subscriptionData.purchasedAt) {
+			errors.push('purchasedAt is required');
+		}
+
+		if (subscriptionData.pageLimit !== undefined && subscriptionData.pageLimit < 0) {
+			errors.push('pageLimit must be non-negative');
+		}
+
+		if (subscriptionData.pagesUsed !== undefined && subscriptionData.pagesUsed < 0) {
+			errors.push('pagesUsed must be non-negative');
+		}
+
+		return {
+			isValid: errors.length === 0,
+			errors: errors
+		};
+	}
+
+	/**
 	 * Sanitize webhook data for logging
 	 * @param {Object} webhookData - The webhook data to sanitize
 	 * @returns {Object} - Sanitized webhook data
