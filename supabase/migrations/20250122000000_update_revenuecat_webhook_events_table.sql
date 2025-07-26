@@ -12,6 +12,7 @@ DROP COLUMN IF EXISTS attributes,
 DROP COLUMN IF EXISTS product_identifier,
 DROP COLUMN IF EXISTS product_title,
 DROP COLUMN IF EXISTS product_description;
+DROP COLUMN IF EXISTS original_app_user_id;
 
 -- Update entitlement_id column to handle both single and array values
 -- The application logic will handle extracting the appropriate entitlement_id
