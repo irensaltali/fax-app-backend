@@ -157,11 +157,58 @@ export class RevenueCatUtils {
 			productId: event.product_id,
 			periodType: event.period_type,
 			purchasedAt: event.purchased_at_ms,
-			expiresAt: event.expires_at_ms,
+			expiresAt: event.expires_at_ms, // This will be calculated in the database layer
 			isTrialConversion: event.is_trial_conversion || false,
 			store: event.store,
 			environment: event.environment
 		};
+	}
+
+	/**
+	 * Calculate expiration date based on product configuration
+	 * @param {Object} product - The product data with expire_days or expire_period
+	 * @param {Date} purchasedAt - The purchase date
+	 * @returns {Date|null} - The calculated expiration date or null if calculation fails
+	 */
+	static calculateExpirationDate(product, purchasedAt) {
+		try {
+			if (!product || !purchasedAt) {
+				return null;
+			}
+
+			const purchaseDate = new Date(purchasedAt);
+			let expirationDate = new Date(purchaseDate);
+
+			// Use expire_days if available, otherwise use expire_period
+			if (product.expire_days && product.expire_days > 0) {
+				expirationDate.setDate(purchaseDate.getDate() + product.expire_days);
+			} else if (product.expire_period) {
+				switch (product.expire_period) {
+					case 'day':
+						expirationDate.setDate(purchaseDate.getDate() + 1);
+						break;
+					case 'week':
+						expirationDate.setDate(purchaseDate.getDate() + 7);
+						break;
+					case 'month':
+						expirationDate.setMonth(purchaseDate.getMonth() + 1);
+						break;
+					case 'year':
+						expirationDate.setFullYear(purchaseDate.getFullYear() + 1);
+						break;
+					default:
+						// Fallback to month if invalid period
+						expirationDate.setMonth(purchaseDate.getMonth() + 1);
+				}
+			} else {
+				// Fallback to month if no expiration configuration
+				expirationDate.setMonth(purchaseDate.getMonth() + 1);
+			}
+
+			return expirationDate;
+		} catch (error) {
+			return null;
+		}
 	}
 
 	/**

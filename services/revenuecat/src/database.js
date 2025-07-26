@@ -48,6 +48,24 @@ export class DatabaseUtils {
 				entitlementId = event.entitlement_ids[0]; // Use first entitlement_id from array
 			}
 
+			// Calculate expiration date based on product configuration
+			let expiresAt = null;
+			if (event.product_id) {
+				const product = await DatabaseUtils.getProductById(event.product_id, env, logger);
+				if (product && event.purchased_at_ms) {
+					const purchaseDate = new Date(parseInt(event.purchased_at_ms));
+					expiresAt = DatabaseUtils.calculateExpirationDate(product, purchaseDate, logger);
+					if (expiresAt) {
+						expiresAt = expiresAt.toISOString();
+					}
+				}
+			}
+
+			// If we couldn't calculate expiration from product, use the webhook's expires_at if available
+			if (!expiresAt && event.expires_at_ms) {
+				expiresAt = new Date(parseInt(event.expires_at_ms)).toISOString();
+			}
+
 			// Sanitize and validate data before insertion
 			const webhookRecord = {
 				event_type: event.type || 'UNKNOWN',
@@ -57,7 +75,7 @@ export class DatabaseUtils {
 				entitlement_id: entitlementId,
 				period_type: event.period_type || null,
 				purchased_at: event.purchased_at_ms ? new Date(parseInt(event.purchased_at_ms)).toISOString() : null,
-				expires_at: event.expires_at_ms ? new Date(parseInt(event.expires_at_ms)).toISOString() : null,
+				expires_at: expiresAt,
 				environment: event.environment || null,
 				store: event.store || null,
 				is_trial_conversion: Boolean(event.is_trial_conversion) || false,
@@ -180,10 +198,28 @@ export class DatabaseUtils {
 					break;
 			}
 
+			// Calculate expiration date based on product configuration
+			let subscriptionExpiresAt = null;
+			if (event.product_id && event.purchased_at_ms) {
+				const product = await DatabaseUtils.getProductById(event.product_id, env, logger);
+				if (product) {
+					const purchaseDate = new Date(parseInt(event.purchased_at_ms));
+					const expirationDate = DatabaseUtils.calculateExpirationDate(product, purchaseDate, logger);
+					if (expirationDate) {
+						subscriptionExpiresAt = expirationDate.toISOString();
+					}
+				}
+			}
+
+			// If we couldn't calculate expiration from product, use the webhook's expires_at if available
+			if (!subscriptionExpiresAt && event.expires_at_ms) {
+				subscriptionExpiresAt = new Date(parseInt(event.expires_at_ms)).toISOString();
+			}
+
 			const updateData = {
 				subscription_status: subscriptionStatus,
 				subscription_product_id: event.product_id,
-				subscription_expires_at: event.expires_at_ms ? new Date(parseInt(event.expires_at_ms)).toISOString() : null,
+				subscription_expires_at: subscriptionExpiresAt,
 				subscription_purchased_at: event.purchased_at_ms ? new Date(parseInt(event.purchased_at_ms)).toISOString() : null,
 				subscription_store: event.store,
 				subscription_environment: event.environment,
@@ -262,6 +298,116 @@ export class DatabaseUtils {
 				error: error.message,
 				userId: userId
 			});
+			return null;
+		}
+	}
+
+	/**
+	 * Get product information by product ID
+	 * @param {string} productId - The product ID
+	 * @param {Object} env - Environment variables
+	 * @param {Object} logger - Logger instance
+	 * @returns {Promise<Object|null>} - The product data or null if not found
+	 */
+	static async getProductById(productId, env, logger) {
+		try {
+			if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+				logger.log('WARN', 'Supabase not configured, cannot get product information');
+				return null;
+			}
+
+			const supabase = DatabaseUtils.getSupabaseAdminClient(env);
+
+			const { data: product, error } = await supabase
+				.from('products')
+				.select('*')
+				.eq('product_id', productId)
+				.eq('is_active', true)
+				.single();
+
+			if (error) {
+				logger.log('ERROR', 'Failed to get product information', {
+					error: error.message,
+					productId: productId
+				});
+				return null;
+			}
+
+			return product;
+		} catch (error) {
+			logger.log('ERROR', 'Error getting product information', {
+				error: error.message,
+				productId: productId
+			});
+			return null;
+		}
+	}
+
+	/**
+	 * Calculate expiration date based on product configuration
+	 * @param {Object} product - The product data
+	 * @param {Date} purchasedAt - The purchase date
+	 * @param {Object} logger - Logger instance
+	 * @returns {Date|null} - The calculated expiration date or null if calculation fails
+	 */
+	static calculateExpirationDate(product, purchasedAt, logger) {
+		try {
+			if (!product || !purchasedAt) {
+				logger.log('WARN', 'Missing product or purchase date for expiration calculation');
+				return null;
+			}
+
+			const purchaseDate = new Date(purchasedAt);
+			let expirationDate = new Date(purchaseDate);
+
+			// Use expire_days if available, otherwise use expire_period
+			if (product.expire_days && product.expire_days > 0) {
+				expirationDate.setDate(purchaseDate.getDate() + product.expire_days);
+				logger.log('DEBUG', 'Using expire_days for expiration calculation', {
+					productId: product.product_id,
+					expireDays: product.expire_days
+				});
+			} else if (product.expire_period) {
+				switch (product.expire_period) {
+					case 'day':
+						expirationDate.setDate(purchaseDate.getDate() + 1);
+						break;
+					case 'week':
+						expirationDate.setDate(purchaseDate.getDate() + 7);
+						break;
+					case 'month':
+						expirationDate.setMonth(purchaseDate.getMonth() + 1);
+						break;
+					case 'year':
+						expirationDate.setFullYear(purchaseDate.getFullYear() + 1);
+						break;
+					default:
+						// Fallback to month if invalid period
+						logger.log('WARN', 'Invalid expire_period, using month as fallback', {
+							productId: product.product_id,
+							expirePeriod: product.expire_period
+						});
+						expirationDate.setMonth(purchaseDate.getMonth() + 1);
+				}
+				logger.log('DEBUG', 'Using expire_period for expiration calculation', {
+					productId: product.product_id,
+					expirePeriod: product.expire_period
+				});
+			} else {
+				// Fallback to month if no expiration configuration
+				logger.log('WARN', 'No expiration configuration found, using month as fallback', {
+					productId: product.product_id
+				});
+				expirationDate.setMonth(purchaseDate.getMonth() + 1);
+			}
+
+			return expirationDate;
+		} catch (error) {
+			logger.log('ERROR', 'Error calculating expiration date', {
+				error: error.message,
+				productId: product?.product_id
+			});
+			// Return null to indicate calculation failure
 			return null;
 		}
 	}
