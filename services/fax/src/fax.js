@@ -503,13 +503,9 @@ export default class extends WorkerEntrypoint {
 				completed_at: ['delivered', 'failed', 'cancelled'].includes(standardizedStatus) ? new Date().toISOString() : null
 			};
 
-			// Add page count if available in the webhook payload
-			if (pageCount !== null && pageCount !== undefined) {
+			// Add page count if available and valid in the webhook payload
+			if (pageCount !== null && pageCount !== undefined && pageCount > 0) {
 				updateData.pages = pageCount;
-				this.logger.log('DEBUG', 'Page count included in webhook update', { 
-					telnyxFaxId, 
-					pageCount 
-				});
 			}
 
 			// Update fax record using provider_fax_id as lookup key
@@ -624,13 +620,9 @@ export default class extends WorkerEntrypoint {
 				completed_at: ['delivered', 'failed', 'cancelled'].includes(standardizedStatus) ? new Date().toISOString() : null
 			};
 
-			// Add page count if available in the webhook payload
-			if (pageCount !== null && pageCount !== undefined) {
+			// Add page count if available and valid in the webhook payload
+			if (pageCount !== null && pageCount !== undefined && pageCount > 0) {
 				updateData.pages = pageCount;
-				this.logger.log('DEBUG', 'Page count included in webhook update', { 
-					notifyreFaxId, 
-					pageCount 
-				});
 			}
 
 			// Update fax record using provider_fax_id as lookup key
