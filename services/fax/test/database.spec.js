@@ -132,7 +132,7 @@ describe('DatabaseUtils', () => {
 		it('should save fax record successfully', async () => {
 			const savedRecord = {
 				id: 'db_123',
-				notifyre_fax_id: 'fax_123',
+				provider_fax_id: 'fax_123',
 				user_id: 'user_123'
 			};
 
@@ -149,7 +149,7 @@ describe('DatabaseUtils', () => {
 			expect(result).toEqual(savedRecord);
 			expect(mockLogger.log).toHaveBeenCalledWith('INFO', 'Fax record saved successfully to database', {
 				recordId: 'db_123',
-				providerFaxId: undefined,
+				providerFaxId: 'fax_123',
 				userId: 'user_123'
 			});
 		});
@@ -169,7 +169,7 @@ describe('DatabaseUtils', () => {
 			expect(mockLogger.log).toHaveBeenCalledWith('ERROR', 'Failed to save fax record to database', {
 				error: 'Database error',
 				code: '23505',
-				faxId: undefined
+				faxId: 'fax_123'
 			});
 			expect(mockLogger.log).toHaveBeenCalledWith('ERROR', 'Error saving fax record to database', {
 				error: 'Database error',
@@ -181,7 +181,7 @@ describe('DatabaseUtils', () => {
 		it('should save anonymous user fax record', async () => {
 			const savedRecord = {
 				id: 'db_124',
-				notifyre_fax_id: 'fax_123',
+				provider_fax_id: 'fax_123',
 				user_id: null
 			};
 
@@ -252,7 +252,7 @@ describe('DatabaseUtils', () => {
 		it('should update fax record successfully', async () => {
 			const updatedRecord = {
 				id: 'db_123',
-				notifyre_fax_id: 'fax_123',
+				provider_fax_id: 'fax_123',
 				status: 'delivered'
 			};
 

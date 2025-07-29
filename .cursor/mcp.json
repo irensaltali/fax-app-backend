@@ -1,0 +1,30 @@
+{
+  "mcpServers": {
+    "revenuecat": {
+      "type": "http",
+      "url": "https://mcp.revenuecat.ai/mcp",
+      "headers": {
+        "Authorization": "Bearer sk_rAXOgRqvlTYeLwgMstaxasNddmoOM"
+      }
+    },
+    "supabase": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@supabase/mcp-server-supabase@latest",
+        "--read-only",
+        "--project-ref=vqdpahsrwtaccjozuchj"
+      ],
+      "env": {
+        "SUPABASE_ACCESS_TOKEN": "sbp_7a2e51af804ab74d9ef7a3a5d2cad953bc650404"
+      }
+    },
+    "PostHog": {
+      "type": "http",
+      "url": "https://mcp.posthog.com/sse",
+      "headers": {
+        "Authorization": "Bearer phx_MCc1Hbtknc5DRloOj9PL9g0854XD7LHgYZkI9MPVHDcW3zN"
+      }
+    }
+  }
+}

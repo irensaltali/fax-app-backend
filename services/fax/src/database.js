@@ -37,7 +37,8 @@ export class DatabaseUtils {
 				sent_at: faxData.sentAt || new Date().toISOString(),
 				completed_at: faxData.completedAt || null,
 				error_message: faxData.errorMessage || null,
-				metadata: metadata
+				metadata: metadata,
+				provider_fax_id: faxData.providerFaxId || faxData.id || null
 			};
 
 			const { data: recordedFaxData, error } = await supabase
@@ -121,7 +122,7 @@ export class DatabaseUtils {
 
 			logger.log('INFO', 'Fax record updated successfully in database', {
 				recordId: data.id,
-				faxId: data.provider_fax_id || data.notifyre_fax_id || data.id,
+				faxId: data.provider_fax_id || data.id,
 				idType
 			});
 

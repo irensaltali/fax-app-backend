@@ -100,6 +100,28 @@ export default class extends WorkerEntrypoint {
 				});
 			}
 
+			// Check for duplicate webhook early in the process
+			const eventId = webhookData.event?.id;
+			if (eventId) {
+				const existingEvent = await DatabaseUtils.checkWebhookEventExists(eventId, callerEnvObj, this.logger);
+				if (existingEvent) {
+					this.logger.log('INFO', 'Duplicate webhook event detected, returning success without processing', {
+						eventId: eventId,
+						eventType: existingEvent.event_type,
+						originalProcessedAt: existingEvent.processed_at
+					});
+					return new Response(JSON.stringify({ 
+						success: true, 
+						message: 'Event already processed',
+						eventId: eventId,
+						processedAt: existingEvent.processed_at
+					}), {
+						status: 200,
+						headers: { 'Content-Type': 'application/json' }
+					});
+				}
+			}
+
 			this.logger.log('INFO', `Processing webhook event: ${eventType}`);
 
 			// Handle different event types
@@ -128,17 +150,21 @@ export default class extends WorkerEntrypoint {
 				case 'PRODUCT_CHANGE':
 					await this.handleProductChange(webhookData, callerEnvObj);
 					break;
+				case 'TRANSFER':
+					await this.handleTransfer(webhookData, callerEnvObj);
+					break;
 				default:
 					this.logger.log('WARN', `Unhandled event type: ${eventType}`);
 			}
 
-			// Store webhook event in database
-			await DatabaseUtils.storeRevenueCatWebhookEvent(webhookData, callerEnvObj, this.logger);
+			// Store webhook event in database (this also handles subscription updates)
+			const storedEvent = await DatabaseUtils.storeRevenueCatWebhookEvent(webhookData, callerEnvObj, this.logger);
 
-			// Update user subscription status if applicable
-			await this.updateUserSubscriptionStatus(webhookData, callerEnvObj);
-
-			return new Response(JSON.stringify({ success: true }), {
+			return new Response(JSON.stringify({ 
+				success: true,
+				eventId: storedEvent?.event_id,
+				processedAt: storedEvent?.processed_at
+			}), {
 				status: 200,
 				headers: { 'Content-Type': 'application/json' }
 			});
@@ -189,11 +215,18 @@ export default class extends WorkerEntrypoint {
 	}
 
 	/**
-	 * Handle non-renewing purchase events
+	 * Handle non-renewing purchase events (consumables)
 	 */
 	async handleNonRenewingPurchase(webhookData, callerEnvObj) {
-		this.logger.log('INFO', 'Handling non-renewing purchase', webhookData.event);
-		// Implement non-renewing purchase logic
+		this.logger.log('INFO', 'Handling non-renewing purchase (consumable)', {
+			eventId: webhookData.event.id,
+			productId: webhookData.event.product_id,
+			userId: webhookData.event.app_user_id,
+			price: webhookData.event.price,
+			currency: webhookData.event.currency
+		});
+		// The actual logic is handled in storeRevenueCatWebhookEvent method
+		// This method provides additional logging and can be extended for specific consumable logic
 	}
 
 	/**
@@ -221,16 +254,72 @@ export default class extends WorkerEntrypoint {
 	}
 
 	/**
-	 * Update user subscription status based on webhook event
+	 * Handle transfer events
+	 * Transfer occurs when user 1 logs in, makes a purchase, logs out, 
+	 * and then user 2 logs in on the same device with the same underlying 
+	 * App/Play Store account and restores their purchases.
+	 * Entitlements are removed from user 1 and added to user 2.
 	 */
-	async updateUserSubscriptionStatus(webhookData, callerEnvObj) {
-		try {
-			await DatabaseUtils.updateUserSubscriptionStatus(webhookData, callerEnvObj, this.logger);
-			this.logger.log('INFO', 'User subscription status updated');
-		} catch (error) {
-			this.logger.log('ERROR', 'Error updating user subscription status', error);
+	async handleTransfer(webhookData, callerEnvObj) {
+		this.logger.log('INFO', 'Handling transfer event', JSON.stringify(webhookData.event));
+		
+		const event = webhookData.event;
+		
+		// Extract user IDs from the transfer event
+		const transferredFrom = event.transferred_from;
+		const transferredTo = event.transferred_to;
+		
+		if (!transferredFrom || !Array.isArray(transferredFrom) || transferredFrom.length === 0) {
+			this.logger.log('ERROR', 'Missing or invalid transferred_from in transfer event', {
+				transferredFrom,
+				eventId: event.id
+			});
+			return;
+		}
+		
+		if (!transferredTo || !Array.isArray(transferredTo) || transferredTo.length === 0) {
+			this.logger.log('ERROR', 'Missing or invalid transferred_to in transfer event', {
+				transferredTo,
+				eventId: event.id
+			});
+			return;
+		}
+		
+		// For now, we'll transfer from the first user in the array to the first user in the array
+		// In most cases, there should only be one user in each array
+		const fromUserId = transferredFrom[0];
+		const toUserId = transferredTo[0];
+		
+		this.logger.log('INFO', 'Processing transfer', {
+			fromUserId,
+			toUserId,
+			eventId: event.id
+		});
+		
+		// Perform the transfer using the database utility
+		const transferResult = await DatabaseUtils.transferUserData(fromUserId, toUserId, callerEnvObj, this.logger, 'revenuecat_transfer');
+		
+		if (transferResult.success) {
+			this.logger.log('INFO', 'Transfer completed successfully', {
+				eventId: event.id,
+				fromUserId,
+				toUserId,
+				transferredSubscriptions: transferResult.transferredSubscriptions,
+				transferredUsage: transferResult.transferredUsage,
+				transferredFaxes: transferResult.transferredFaxes,
+				oldUserDeleted: transferResult.oldUserDeleted
+			});
+		} else {
+			this.logger.log('ERROR', 'Transfer failed', {
+				eventId: event.id,
+				fromUserId,
+				toUserId,
+				error: transferResult.error
+			});
 		}
 	}
+
+
 
 	/**
 	 * Health check endpoint

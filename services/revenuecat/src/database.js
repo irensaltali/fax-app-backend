@@ -37,6 +37,24 @@ export class DatabaseUtils {
 			// Extract relevant information from webhook data
 			const event = webhookData.event || {};
 
+			// Check for duplicate webhook event first
+			if (event.id) {
+				const { data: existingEvent, error: checkError } = await supabase
+					.from('revenuecat_webhook_events')
+					.select('id, event_type, processed_at')
+					.eq('event_id', event.id)
+					.single();
+
+				if (existingEvent && !checkError) {
+					logger.log('WARN', 'Duplicate webhook event detected, skipping processing', {
+						eventId: event.id,
+						eventType: existingEvent.event_type,
+						originalProcessedAt: existingEvent.processed_at
+					});
+					return existingEvent; // Return existing event to maintain idempotency
+				}
+			}
+
 			// Use original_app_user_id as the user_id for foreign key connection to auth.users
 			let userId = event.original_app_user_id;
 
@@ -90,7 +108,8 @@ export class DatabaseUtils {
 			logger.log('DEBUG', 'Storing RevenueCat webhook event', {
 				eventType: webhookRecord.event_type,
 				userId: webhookRecord.user_id,
-				productId: webhookRecord.product_id
+				productId: webhookRecord.product_id,
+				eventId: webhookRecord.event_id
 			});
 
 			let { data: storedEvent, error } = await supabase
@@ -117,6 +136,29 @@ export class DatabaseUtils {
 				error = retryResult.error;
 			}
 
+			// Handle unique constraint violation (duplicate event_id)
+			if (error && error.code === '23505' && error.message.includes('event_id')) {
+				logger.log('WARN', 'Duplicate webhook event detected (unique constraint violation)', {
+					eventId: webhookRecord.event_id,
+					eventType: webhookRecord.event_type
+				});
+				
+				// Fetch the existing event
+				const { data: existingEvent, error: fetchError } = await supabase
+					.from('revenuecat_webhook_events')
+					.select('*')
+					.eq('event_id', webhookRecord.event_id)
+					.single();
+
+				if (existingEvent && !fetchError) {
+					logger.log('INFO', 'Returning existing webhook event', {
+						eventId: existingEvent.event_id,
+						eventType: existingEvent.event_type
+					});
+					return existingEvent;
+				}
+			}
+
 			if (error) {
 				logger.log('ERROR', 'Failed to store RevenueCat webhook event', {
 					error: error.message,
@@ -124,7 +166,8 @@ export class DatabaseUtils {
 					details: error.details,
 					hint: error.hint,
 					eventType: webhookRecord.event_type,
-					userId: webhookRecord.user_id
+					userId: webhookRecord.user_id,
+					eventId: webhookRecord.event_id
 				});
 				throw error;
 			}
@@ -136,28 +179,40 @@ export class DatabaseUtils {
 			});
 
 			// Also create/update user subscription if this is a purchase event
-			if (['INITIAL_PURCHASE', 'RENEWAL', 'UNCANCELLATION'].includes(event.type) && userId && event.product_id) {
+			if (['INITIAL_PURCHASE', 'RENEWAL', 'UNCANCELLATION', 'NON_RENEWING_PURCHASE'].includes(event.type) && userId && event.product_id) {
 				try {
 					// Get product information to determine page limit
 					const product = await DatabaseUtils.getProductById(event.product_id, env, logger);
 					if (product) {
-						const subscriptionData = {
-							userId: userId,
-							productId: event.product_id,
-							subscriptionId: event.subscription_id,
-							entitlementId: entitlementId,
-							purchasedAt: event.purchased_at_ms ? new Date(parseInt(event.purchased_at_ms)).toISOString() : new Date().toISOString(),
-							expiresAt: expiresAt,
-							pageLimit: product.page_limit || 0
-						};
-
-						const userSubscription = await DatabaseUtils.createOrUpdateUserSubscription(subscriptionData, env, logger);
-						if (userSubscription) {
-							logger.log('INFO', 'User subscription created/updated from webhook', {
+						// Handle consumables (non-renewing purchases) differently
+						if (event.type === 'NON_RENEWING_PURCHASE' && product.type === 'limited-usage') {
+							// For consumables, add pages to existing subscription or create new one
+							await DatabaseUtils.addConsumablePages(userId, event.product_id, product.page_limit || 0, env, logger);
+							logger.log('INFO', 'Consumable pages added from webhook', {
 								userId: userId,
 								productId: event.product_id,
-								subscriptionId: userSubscription.id
+								pagesAdded: product.page_limit || 0
 							});
+						} else {
+							// For subscriptions, create/update subscription
+							const subscriptionData = {
+								userId: userId,
+								productId: event.product_id,
+								subscriptionId: event.subscription_id,
+								entitlementId: entitlementId,
+								purchasedAt: event.purchased_at_ms ? new Date(parseInt(event.purchased_at_ms)).toISOString() : new Date().toISOString(),
+								expiresAt: expiresAt,
+								pageLimit: product.page_limit || 0
+							};
+
+							const userSubscription = await DatabaseUtils.createOrUpdateUserSubscription(subscriptionData, env, logger);
+							if (userSubscription) {
+								logger.log('INFO', 'User subscription created/updated from webhook', {
+									userId: userId,
+									productId: event.product_id,
+									subscriptionId: userSubscription.id
+								});
+							}
 						}
 					}
 				} catch (subscriptionError) {
@@ -174,7 +229,7 @@ export class DatabaseUtils {
 				try {
 					// Find the active subscription for this user and product
 					const userSubscriptions = await DatabaseUtils.getUserSubscriptions(userId, { activeOnly: true }, env, logger);
-					const subscriptionToDeactivate = userSubscriptions.find(sub => 
+					const subscriptionToDeactivate = userSubscriptions.find(sub =>
 						sub.product_id === event.product_id && sub.is_active
 					);
 
@@ -200,130 +255,60 @@ export class DatabaseUtils {
 			logger.log('ERROR', 'Error storing RevenueCat webhook event', {
 				error: error.message,
 				stack: error.stack,
-				eventType: webhookData?.event?.type
+				eventType: webhookData?.event?.type,
+				eventId: webhookData?.event?.id
 			});
 			return null;
 		}
 	}
 
 	/**
-	 * Update user subscription status based on webhook event
-	 * @param {Object} webhookData - The webhook data
+	 * Check if a webhook event has already been processed
+	 * @param {string} eventId - The RevenueCat event ID
 	 * @param {Object} env - Environment variables
 	 * @param {Object} logger - Logger instance
-	 * @returns {Promise<Object|null>} - The updated user record or null if failed
+	 * @returns {Promise<Object|null>} - The existing event if found, null otherwise
 	 */
-			static async updateUserSubscriptionStatus(webhookData, env, logger) {
+	static async checkWebhookEventExists(eventId, env, logger) {
 		try {
 			if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
-				logger.log('WARN', 'Supabase not configured, skipping user subscription update');
+				logger.log('WARN', 'Supabase not configured, cannot check webhook event');
+				return null;
+			}
+
+			if (!eventId) {
+				logger.log('WARN', 'No event ID provided for duplicate check');
 				return null;
 			}
 
 			const supabase = DatabaseUtils.getSupabaseAdminClient(env);
-			const event = webhookData.event || {};
 
-			// Use original_app_user_id for user identification
-			const userId = event.original_app_user_id;
-			if (!userId) {
-				logger.log('WARN', 'No original_app_user_id in webhook data, skipping subscription update');
-				return null;
-			}
-
-			// Skip subscription updates for TEST events
-			if (event.type === 'TEST') {
-				logger.log('INFO', 'Skipping subscription update for TEST event', {
-					userId: userId,
-					eventType: event.type
-				});
-				return null;
-			}
-
-			// Determine subscription status based on event type
-			let subscriptionStatus = 'unknown';
-			switch (event.type) {
-				case 'INITIAL_PURCHASE':
-				case 'RENEWAL':
-				case 'UNCANCELLATION':
-					subscriptionStatus = 'active';
-					break;
-				case 'CANCELLATION':
-					subscriptionStatus = 'cancelled';
-					break;
-				case 'EXPIRATION':
-					subscriptionStatus = 'expired';
-					break;
-				case 'BILLING_ISSUE':
-					subscriptionStatus = 'billing_issue';
-					break;
-			}
-
-			// Calculate expiration date based on product configuration
-			let subscriptionExpiresAt = null;
-			if (event.product_id && event.purchased_at_ms) {
-				const product = await DatabaseUtils.getProductById(event.product_id, env, logger);
-				if (product) {
-					const purchaseDate = new Date(parseInt(event.purchased_at_ms));
-					const expirationDate = DatabaseUtils.calculateExpirationDate(product, purchaseDate, logger);
-					if (expirationDate) {
-						subscriptionExpiresAt = expirationDate.toISOString();
-					}
-				}
-			}
-
-			// If we couldn't calculate expiration from product, use the webhook's expires_at if available
-			if (!subscriptionExpiresAt && event.expires_at_ms) {
-				subscriptionExpiresAt = new Date(parseInt(event.expires_at_ms)).toISOString();
-			}
-
-			const updateData = {
-				subscription_status: subscriptionStatus,
-				subscription_product_id: event.product_id,
-				subscription_expires_at: subscriptionExpiresAt,
-				subscription_purchased_at: event.purchased_at_ms ? new Date(parseInt(event.purchased_at_ms)).toISOString() : null,
-				subscription_store: event.store,
-				subscription_environment: event.environment,
-				updated_at: new Date().toISOString()
-			};
-
-			logger.log('DEBUG', 'Updating user subscription status', {
-				userId: userId,
-				status: subscriptionStatus,
-				productId: event.product_id
-			});
-
-			const { data: updatedUser, error } = await supabase
-				.from('profiles')
-				.update(updateData)
-				.eq('id', userId)
-				.select()
+			const { data: existingEvent, error } = await supabase
+				.from('revenuecat_webhook_events')
+				.select('id, event_id, event_type, user_id, product_id, processed_at')
+				.eq('event_id', eventId)
 				.single();
 
-			if (error) {
-				logger.log('ERROR', 'Failed to update user subscription status', {
+			if (error && error.code !== 'PGRST116') { // PGRST116 is "not found"
+				logger.log('ERROR', 'Error checking webhook event existence', {
 					error: error.message,
-					userId: userId
+					eventId: eventId
 				});
-				throw error;
+				return null;
 			}
 
-			logger.log('INFO', 'User subscription status updated successfully', {
-				userId: updatedUser.id,
-				status: updatedUser.subscription_status
-			});
-
-			return updatedUser;
+			return existingEvent || null;
 		} catch (error) {
-			logger.log('ERROR', 'Error updating user subscription status', {
+			logger.log('ERROR', 'Error checking webhook event existence', {
 				error: error.message,
-				userId: webhookData?.event?.original_app_user_id
+				eventId: eventId
 			});
 			return null;
 		}
 	}
 
 	/**
-	 * Get user subscription information
+	 * Get user subscription information from user_subscriptions table
 	 * @param {string} userId - The user ID
 	 * @param {Object} env - Environment variables
 	 * @param {Object} logger - Logger instance
@@ -338,10 +323,25 @@ export class DatabaseUtils {
 
 			const supabase = DatabaseUtils.getSupabaseAdminClient(env);
 
-			const { data: user, error } = await supabase
-				.from('profiles')
-				.select('subscription_status, subscription_product_id, subscription_expires_at, subscription_purchased_at, subscription_store, subscription_environment')
-				.eq('id', userId)
+			// Get active subscription from user_subscriptions table
+			const { data: subscription, error } = await supabase
+				.from('user_subscriptions')
+				.select(`
+					*,
+					products (
+						product_id,
+						display_name,
+						description,
+						page_limit,
+						expire_days,
+						expire_period,
+						type
+					)
+				`)
+				.eq('user_id', userId)
+				.eq('is_active', true)
+				.order('created_at', { ascending: false })
+				.limit(1)
 				.single();
 
 			if (error) {
@@ -352,7 +352,7 @@ export class DatabaseUtils {
 				return null;
 			}
 
-			return user;
+			return subscription;
 		} catch (error) {
 			logger.log('ERROR', 'Error getting user subscription', {
 				error: error.message,
@@ -828,6 +828,436 @@ export class DatabaseUtils {
 				userId: userId
 			});
 			return [];
+		}
+	}
+
+	/**
+	 * Transfer user data from one user to another (for RevenueCat TRANSFER events)
+	 * @param {string} fromUserId - The user ID to transfer from
+	 * @param {string} toUserId - The user ID to transfer to
+	 * @param {Object} env - Environment variables
+	 * @param {Object} logger - Logger instance
+	 * @param {string} transferReason - Reason for transfer (e.g., 'revenuecat_transfer')
+	 * @returns {Promise<Object>} - Transfer result with counts and status
+	 */
+	static async transferUserData(fromUserId, toUserId, env, logger, transferReason = 'revenuecat_transfer') {
+		try {
+			if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+				logger.log('WARN', 'Supabase not configured, cannot transfer user data');
+				return { success: false, error: 'Supabase not configured' };
+			}
+
+			if (!fromUserId || !toUserId) {
+				logger.log('ERROR', 'Missing user IDs for transfer', {
+					fromUserId: !!fromUserId,
+					toUserId: !!toUserId
+				});
+				return { success: false, error: 'Missing user IDs' };
+			}
+
+			if (fromUserId === toUserId) {
+				logger.log('WARN', 'Transfer requested to same user, skipping', {
+					userId: fromUserId
+				});
+				return { success: true, message: 'No transfer needed' };
+			}
+
+			const supabase = DatabaseUtils.getSupabaseAdminClient(env);
+			const transferResult = {
+				success: true,
+				fromUserId,
+				toUserId,
+				transferredSubscriptions: 0,
+				transferredUsage: 0,
+				transferredFaxes: 0,
+				oldUserDeleted: false,
+				transferId: null
+			};
+
+			logger.log('INFO', 'Starting user data transfer', {
+				fromUserId,
+				toUserId,
+				transferReason
+			});
+
+			// Validate users exist before proceeding
+			const validationResult = await DatabaseUtils.validateUsersForTransfer(fromUserId, toUserId, env, logger);
+			if (!validationResult.valid) {
+				logger.log('ERROR', 'User validation failed for transfer', {
+					fromUserId,
+					toUserId,
+					error: validationResult.error
+				});
+				return { success: false, error: validationResult.error };
+			}
+
+			// Create transfer audit record
+			const transferId = await DatabaseUtils.createTransferAuditRecord(fromUserId, toUserId, transferReason, env, logger);
+			transferResult.transferId = transferId;
+
+			// Wrap all operations in a transaction
+			const { data: transactionResult, error: transactionError } = await supabase.rpc('transfer_user_data_transaction', {
+				p_from_user_id: fromUserId,
+				p_to_user_id: toUserId,
+				p_transfer_id: transferId
+			});
+
+			if (transactionError) {
+				logger.log('ERROR', 'Transaction failed for user transfer', {
+					error: transactionError.message,
+					fromUserId,
+					toUserId,
+					transferId
+				});
+				
+				// Update audit record with failure
+				await DatabaseUtils.updateTransferAuditRecord(transferId, { 
+					success: false, 
+					error: transactionError.message 
+				}, env, logger);
+				
+				return { success: false, error: transactionError.message };
+			}
+
+			// Update transfer result with transaction results
+			if (transactionResult) {
+				transferResult.transferredSubscriptions = transactionResult.transferred_subscriptions || 0;
+				transferResult.transferredUsage = transactionResult.transferred_usage || 0;
+				transferResult.transferredFaxes = transactionResult.transferred_faxes || 0;
+			}
+
+			// Check if old user is anonymous and delete if so
+			try {
+				const { data: oldUser, error: userError } = await supabase.auth.admin.getUserById(fromUserId);
+				
+				if (userError) {
+					logger.log('ERROR', 'Failed to check if old user is anonymous', {
+						error: userError.message,
+						fromUserId
+					});
+				} else if (oldUser && oldUser.user && oldUser.user.app_metadata?.is_anonymous === true) {
+					// Delete anonymous user
+					const { error: deleteError } = await supabase.auth.admin.deleteUser(fromUserId);
+					
+					if (deleteError) {
+						logger.log('ERROR', 'Failed to delete anonymous user', {
+							error: deleteError.message,
+							fromUserId
+						});
+					} else {
+						transferResult.oldUserDeleted = true;
+						logger.log('INFO', 'Deleted anonymous user after transfer', {
+							fromUserId
+						});
+					}
+				} else {
+					logger.log('INFO', 'Old user is not anonymous, keeping user account', {
+						fromUserId,
+						isAnonymous: oldUser?.user?.app_metadata?.is_anonymous
+					});
+				}
+			} catch (error) {
+				logger.log('ERROR', 'Error checking/deleting old user', {
+					error: error.message,
+					fromUserId
+				});
+			}
+
+			// Update audit record with success
+			await DatabaseUtils.updateTransferAuditRecord(transferId, {
+				success: true,
+				transferredSubscriptions: transferResult.transferredSubscriptions,
+				transferredUsage: transferResult.transferredUsage,
+				transferredFaxes: transferResult.transferredFaxes,
+				oldUserDeleted: transferResult.oldUserDeleted
+			}, env, logger);
+
+			logger.log('INFO', 'User data transfer completed', transferResult);
+			return transferResult;
+
+		} catch (error) {
+			logger.log('ERROR', 'Error in user data transfer', {
+				error: error.message,
+				fromUserId,
+				toUserId
+			});
+			return { 
+				success: false, 
+				error: error.message,
+				fromUserId,
+				toUserId
+			};
+		}
+	}
+
+	/**
+	 * Validate users exist and are eligible for transfer
+	 * @param {string} fromUserId - The user ID to transfer from
+	 * @param {string} toUserId - The user ID to transfer to
+	 * @param {Object} env - Environment variables
+	 * @param {Object} logger - Logger instance
+	 * @returns {Promise<Object>} - Validation result
+	 */
+	static async validateUsersForTransfer(fromUserId, toUserId, env, logger) {
+		try {
+			const supabase = DatabaseUtils.getSupabaseAdminClient(env);
+
+			// Check if both users exist
+			const { data: fromUser, error: fromUserError } = await supabase.auth.admin.getUserById(fromUserId);
+			if (fromUserError || !fromUser?.user) {
+				return { valid: false, error: `Source user ${fromUserId} does not exist` };
+			}
+
+			const { data: toUser, error: toUserError } = await supabase.auth.admin.getUserById(toUserId);
+			if (toUserError || !toUser?.user) {
+				return { valid: false, error: `Target user ${toUserId} does not exist` };
+			}
+
+			// Check if target user is anonymous (should not transfer to anonymous user)
+			if (toUser.user.app_metadata?.is_anonymous === true) {
+				return { valid: false, error: `Cannot transfer to anonymous user ${toUserId}` };
+			}
+
+			return { valid: true };
+		} catch (error) {
+			logger.log('ERROR', 'Error validating users for transfer', {
+				error: error.message,
+				fromUserId,
+				toUserId
+			});
+			return { valid: false, error: error.message };
+		}
+	}
+
+	/**
+	 * Create audit record for transfer operation
+	 * @param {string} fromUserId - The user ID to transfer from
+	 * @param {string} toUserId - The user ID to transfer to
+	 * @param {string} transferReason - Reason for transfer
+	 * @param {Object} env - Environment variables
+	 * @param {Object} logger - Logger instance
+	 * @returns {Promise<string>} - Transfer ID
+	 */
+	static async createTransferAuditRecord(fromUserId, toUserId, transferReason, env, logger) {
+		try {
+			const supabase = DatabaseUtils.getSupabaseAdminClient(env);
+
+			const { data: transferRecord, error } = await supabase
+				.from('user_transfers')
+				.insert({
+					from_user_id: fromUserId,
+					to_user_id: toUserId,
+					transfer_reason: transferReason,
+					status: 'in_progress'
+				})
+				.select('id')
+				.single();
+
+			if (error) {
+				logger.log('ERROR', 'Failed to create transfer audit record', {
+					error: error.message,
+					fromUserId,
+					toUserId
+				});
+				return null;
+			}
+
+			logger.log('INFO', 'Created transfer audit record', {
+				transferId: transferRecord.id,
+				fromUserId,
+				toUserId
+			});
+
+			return transferRecord.id;
+		} catch (error) {
+			logger.log('ERROR', 'Error creating transfer audit record', {
+				error: error.message,
+				fromUserId,
+				toUserId
+			});
+			return null;
+		}
+	}
+
+	/**
+	 * Update transfer audit record with results
+	 * @param {string} transferId - The transfer ID
+	 * @param {Object} results - Transfer results
+	 * @param {Object} env - Environment variables
+	 * @param {Object} logger - Logger instance
+	 * @returns {Promise<void>}
+	 */
+	static async updateTransferAuditRecord(transferId, results, env, logger) {
+		try {
+			if (!transferId) return;
+
+			const supabase = DatabaseUtils.getSupabaseAdminClient(env);
+
+			const updateData = {
+				status: results.success ? 'completed' : 'failed',
+				completed_at: new Date().toISOString(),
+				transferred_subscriptions: results.transferredSubscriptions || 0,
+				transferred_usage: results.transferredUsage || 0,
+				transferred_faxes: results.transferredFaxes || 0,
+				old_user_deleted: results.oldUserDeleted || false
+			};
+
+			if (!results.success && results.error) {
+				updateData.error_message = results.error;
+			}
+
+			const { error } = await supabase
+				.from('user_transfers')
+				.update(updateData)
+				.eq('id', transferId);
+
+			if (error) {
+				logger.log('ERROR', 'Failed to update transfer audit record', {
+					error: error.message,
+					transferId
+				});
+			} else {
+				logger.log('INFO', 'Updated transfer audit record', {
+					transferId,
+					status: updateData.status
+				});
+			}
+		} catch (error) {
+			logger.log('ERROR', 'Error updating transfer audit record', {
+				error: error.message,
+				transferId
+			});
+		}
+	}
+
+	/**
+	 * Add consumable pages to user's subscription or create new one
+	 * @param {string} userId - The user ID
+	 * @param {string} productId - The consumable product ID
+	 * @param {number} pagesToAdd - Number of pages to add
+	 * @param {Object} env - Environment variables
+	 * @param {Object} logger - Logger instance
+	 * @returns {Promise<Object|null>} - The updated/created subscription or null if failed
+	 */
+	static async addConsumablePages(userId, productId, pagesToAdd, env, logger) {
+		try {
+			if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+				logger.log('WARN', 'Supabase not configured, cannot add consumable pages');
+				return null;
+			}
+
+			const supabase = DatabaseUtils.getSupabaseAdminClient(env);
+
+			// Get product information
+			const product = await DatabaseUtils.getProductById(productId, env, logger);
+			if (!product) {
+				logger.log('ERROR', 'Product not found for consumable pages', {
+					productId: productId,
+					userId: userId
+				});
+				return null;
+			}
+
+			// Check if user has an active subscription
+			const { data: existingSubscriptions, error: subError } = await supabase
+				.from('user_subscriptions')
+				.select('*')
+				.eq('user_id', userId)
+				.eq('is_active', true)
+				.order('created_at', { ascending: false })
+				.limit(1);
+
+			if (subError) {
+				logger.log('ERROR', 'Failed to check existing subscriptions', {
+					error: subError.message,
+					userId: userId
+				});
+				return null;
+			}
+
+			if (existingSubscriptions && existingSubscriptions.length > 0) {
+				// Add pages to existing subscription
+				const existingSubscription = existingSubscriptions[0];
+				const newPageLimit = existingSubscription.page_limit + pagesToAdd;
+
+				const { data: updatedSubscription, error: updateError } = await supabase
+					.from('user_subscriptions')
+					.update({ 
+						page_limit: newPageLimit,
+						updated_at: new Date().toISOString()
+					})
+					.eq('id', existingSubscription.id)
+					.select()
+					.single();
+
+				if (updateError) {
+					logger.log('ERROR', 'Failed to update subscription with consumable pages', {
+						error: updateError.message,
+						subscriptionId: existingSubscription.id,
+						userId: userId
+					});
+					return null;
+				}
+
+				logger.log('INFO', 'Added consumable pages to existing subscription', {
+					subscriptionId: updatedSubscription.id,
+					userId: userId,
+					pagesAdded: pagesToAdd,
+					newTotal: newPageLimit
+				});
+
+				return updatedSubscription;
+			} else {
+				// Create new subscription for consumable
+				const purchaseDate = new Date();
+				const expiresAt = product.expire_days > 0 
+					? new Date(purchaseDate.getTime() + (product.expire_days * 24 * 60 * 60 * 1000)).toISOString()
+					: null;
+
+				const newSubscriptionData = {
+					user_id: userId,
+					product_id: productId,
+					subscription_id: null, // Consumables don't have subscription IDs
+					entitlement_id: null,
+					purchased_at: purchaseDate.toISOString(),
+					expires_at: expiresAt,
+					page_limit: pagesToAdd,
+					pages_used: 0,
+					is_active: true
+				};
+
+				const { data: newSubscription, error: insertError } = await supabase
+					.from('user_subscriptions')
+					.insert(newSubscriptionData)
+					.select()
+					.single();
+
+				if (insertError) {
+					logger.log('ERROR', 'Failed to create new subscription for consumable', {
+						error: insertError.message,
+						userId: userId,
+						productId: productId
+					});
+					return null;
+				}
+
+				logger.log('INFO', 'Created new subscription for consumable', {
+					subscriptionId: newSubscription.id,
+					userId: userId,
+					productId: productId,
+					pagesAdded: pagesToAdd
+				});
+
+				return newSubscription;
+			}
+		} catch (error) {
+			logger.log('ERROR', 'Error adding consumable pages', {
+				error: error.message,
+				userId: userId,
+				productId: productId,
+				pagesToAdd: pagesToAdd
+			});
+			return null;
 		}
 	}
 } 
