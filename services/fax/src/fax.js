@@ -4,7 +4,7 @@
 
 import { env, WorkerEntrypoint } from "cloudflare:workers";
 import { Logger } from './utils.js';
-import { DatabaseUtils } from './database.js';
+import { DatabaseUtils, FaxDatabaseUtils } from './database.js';
 import { NotifyreProvider } from './providers/notifyre-provider.js';
 import { TelnyxProvider } from './providers/telnyx-provider.js';
 import { R2Utils } from './r2-utils.js';
@@ -197,6 +197,40 @@ export default class extends WorkerEntrypoint {
 			const faxRequest = await faxProvider.prepareFaxRequest(requestBody);
 
 			const userId = sagContextObj.jwtPayload?.sub || sagContextObj.jwtPayload?.user_id || sagContextObj.user?.id || null;
+			
+			// Check user credits before sending fax
+			const pagesRequired = faxRequest.pages || 1; // Default to 1 page if not specified
+			// Use caller environment for database operations (contains Supabase configuration)
+			const creditCheck = await FaxDatabaseUtils.checkUserCredits(userId, pagesRequired, callerEnvObj, this.logger);
+			
+			if (!creditCheck.hasCredits) {
+				this.logger.log('WARN', 'Insufficient credits for fax', {
+					userId: userId,
+					pagesRequired: pagesRequired,
+					availablePages: creditCheck.availablePages,
+					error: creditCheck.error
+				});
+				
+				return {
+					statusCode: 402,
+					error: "Insufficient credits",
+					message: creditCheck.error || "You don't have enough credits to send this fax",
+					data: {
+						pagesRequired: pagesRequired,
+						availablePages: creditCheck.availablePages,
+						subscriptionId: creditCheck.subscriptionId
+					},
+					timestamp: new Date().toISOString()
+				};
+			}
+			
+			this.logger.log('INFO', 'Credit check passed', {
+				userId: userId,
+				pagesRequired: pagesRequired,
+				availablePages: creditCheck.availablePages,
+				subscriptionId: creditCheck.subscriptionId
+			});
+			
 			let faxResult;
 
 			if (faxProvider.getProviderName() === 'telnyx') {
@@ -206,7 +240,7 @@ export default class extends WorkerEntrypoint {
 				this.logger.log('INFO', 'Using standard provider workflow');
 				const providerPayload = await faxProvider.buildPayload(faxRequest);
 				faxResult = await faxProvider.sendFax(providerPayload);
-				await this.saveFaxRecordForStandardWorkflow(faxResult, faxRequest, userId, faxProvider.getProviderName());
+				await this.saveFaxRecordForStandardWorkflow(faxResult, faxRequest, userId, faxProvider.getProviderName(), callerEnvObj);
 			}
 
 			if (!faxResult.id) {
@@ -219,6 +253,42 @@ export default class extends WorkerEntrypoint {
 				friendlyId: faxResult.friendlyId,
 				apiProvider: faxProvider.getProviderName()
 			});
+
+			// Update user's page usage after successful fax submission
+			if (creditCheck.subscriptionId) {
+				try {
+					const usageUpdate = await FaxDatabaseUtils.updatePageUsage(
+						userId, 
+						pagesRequired, 
+						creditCheck.subscriptionId, 
+						callerEnvObj, 
+						this.logger
+					);
+					
+					if (usageUpdate.success) {
+						this.logger.log('INFO', 'Page usage updated successfully', {
+							userId: userId,
+							subscriptionId: creditCheck.subscriptionId,
+							pagesUsed: pagesRequired,
+							newPagesUsed: usageUpdate.updatedSubscription.pages_used
+						});
+					} else {
+						this.logger.log('ERROR', 'Failed to update page usage', {
+							userId: userId,
+							subscriptionId: creditCheck.subscriptionId,
+							error: usageUpdate.error
+						});
+						// Don't fail the fax operation if usage tracking fails
+					}
+				} catch (usageError) {
+					this.logger.log('ERROR', 'Error updating page usage', {
+						userId: userId,
+						subscriptionId: creditCheck.subscriptionId,
+						error: usageError.message
+					});
+					// Don't fail the fax operation if usage tracking fails
+				}
+			}
 
 			return {
 				statusCode: 200,
@@ -420,7 +490,7 @@ export default class extends WorkerEntrypoint {
 		}
 	}
 
-	async saveFaxRecordForStandardWorkflow(faxResult, faxRequest, userId, providerName) {
+	async saveFaxRecordForStandardWorkflow(faxResult, faxRequest, userId, providerName, callerEnvObj) {
 		try {
 			this.logger.log('DEBUG', 'Saving fax record for standard workflow', {
 				userId: userId || 'anonymous',
@@ -445,11 +515,8 @@ export default class extends WorkerEntrypoint {
 				apiProvider: providerName
 			};
 
-			// Prefer caller environment (where Supabase keys usually reside) if available
-			const envForDb = (this.callerEnvObj && this.callerEnvObj.SUPABASE_SERVICE_ROLE_KEY)
-				? this.callerEnvObj
-				: this.env;
-			const savedFaxRecord = await DatabaseUtils.saveFaxRecord(faxDataForSave, userId, envForDb, this.logger);
+			// Use caller environment for database operations (contains Supabase configuration)
+			const savedFaxRecord = await DatabaseUtils.saveFaxRecord(faxDataForSave, userId, callerEnvObj, this.logger);
 
 			this.logger.log('DEBUG', 'Fax record saved successfully', {
 				faxId: savedFaxRecord?.id,

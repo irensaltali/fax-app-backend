@@ -12,7 +12,7 @@ vi.mock('@supabase/supabase-js', () => ({
 	}))
 }));
 
-// Mock DatabaseUtils
+// Mock DatabaseUtils and FaxDatabaseUtils
 vi.mock('../src/database.js', () => ({
 	DatabaseUtils: {
 		getSupabaseAdminClient: vi.fn(() => ({
@@ -26,6 +26,25 @@ vi.mock('../src/database.js', () => ({
 		updateFaxRecord: vi.fn().mockResolvedValue({ id: 'updated-fax-123' }),
 		
 		storeWebhookEvent: vi.fn().mockResolvedValue(true)
+	},
+	FaxDatabaseUtils: {
+		checkUserCredits: vi.fn().mockResolvedValue({
+			hasCredits: true,
+			availablePages: 100,
+			subscriptionId: 'test-subscription-id',
+			subscriptions: [],
+			error: null
+		}),
+		updatePageUsage: vi.fn().mockResolvedValue({
+			success: true,
+			updatedSubscription: { pages_used: 5 }
+		}),
+		getUserFaxUsage: vi.fn().mockResolvedValue({
+			success: true,
+			totalPages: 10,
+			faxCount: 5,
+			faxes: []
+		})
 	}
 }));
 
