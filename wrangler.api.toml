@@ -58,8 +58,8 @@ services = [
 SUPABASE_URL = "https://qgzzpufyjczgvvggvrhh.supabase.co"
 LOG_LEVEL = "DEBUG"
 FAX_PROVIDER = "telynx"
-TELNYX_CONNECTION_ID = "2740858224415605884"
-TELNYX_SENDER_ID = "+18334610414"
+TELNYX_CONNECTION_ID = "2751644625826481977"
+TELNYX_SENDER_ID = "+18886720329"
 
 [env.prod.observability]
 enabled = true
