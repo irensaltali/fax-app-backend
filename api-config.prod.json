@@ -18,14 +18,26 @@
         {
             "alias": "fax_service",
             "binding": "FAX_SERVICE"
+        },
+        {
+            "alias": "env_test_service",
+            "binding": "ENV_TEST_SERVICE"
+        },
+        {
+            "alias": "revenuecat_service",
+            "binding": "REVENUECAT_SERVICE"
+        },
+        {
+            "alias": "management_service",
+            "binding": "MANAGEMENT_SERVICE"
         }
     ],
     "cors": {
         "allow_origins": [
             "https://sendfax.pro",
-            "https://api-staging.sendfax.pro",
             "https://api.sendfax.pro",
-            "https://send-fax-staging.irensaltali.workers.dev/"
+            "https://api.sendfax.pro",
+            "https://send-fax-prod.irensaltali.workers.dev/"
         ],
         "allow_methods": [
             "GET",
@@ -46,7 +58,7 @@
     "authorizer": {
         "type": "supabase",
         "jwt_secret": "$secrets.SUPABASE_JWT_SECRET",
-        "issuer": "https://YOUR_PROJECT_ID.supabase.co/auth/v1",
+        "issuer": "https://qgzzpufyjczgvvggvrhh.supabase.co/auth/v1",
         "audience": "authenticated"
     },
     "variables": {
@@ -84,12 +96,122 @@
             "auth": true
         },
         {
+            "method": "GET",
+            "path": "/v1/env-test/debug",
+            "integration": {
+                "type": "service_binding",
+                "binding": "env_test_service",
+                "function": "debug"
+            },
+            "auth": false
+        },
+        {
+            "method": "GET",
+            "path": "/v1/fax/debug",
+            "integration": {
+                "type": "service_binding",
+                "binding": "fax_service",
+                "function": "debug"
+            },
+            "auth": false
+        },
+        {
+            "method": "POST",
+            "path": "/v1/fax/upload-to-r2",
+            "integration": {
+                "type": "service_binding",
+                "binding": "fax_service",
+                "function": "uploadFilesToR2"
+            },
+            "auth": false
+        },
+        {
             "method": "POST",
             "path": "/v1/fax/webhook/telnyx",
             "integration": {
                 "type": "service_binding",
                 "binding": "fax_service",
                 "function": "telnyxWebhook"
+            },
+            "auth": false
+        },
+        {
+            "method": "POST",
+            "path": "/v1/revenuecat/webhook",
+            "integration": {
+                "type": "service_binding",
+                "binding": "revenuecat_service",
+                "function": "webhook"
+            },
+            "auth": false
+        },
+        {
+            "method": "GET",
+            "path": "/v1/revenuecat/health",
+            "integration": {
+                "type": "service_binding",
+                "binding": "revenuecat_service",
+                "function": "health"
+            },
+            "auth": false
+        },
+        {
+            "method": "GET",
+            "path": "/v1/revenuecat/health/protected",
+            "integration": {
+                "type": "service_binding",
+                "binding": "revenuecat_service",
+                "function": "health"
+            },
+            "auth": true
+        },
+        {
+            "method": "GET",
+            "path": "/v1/management/health",
+            "integration": {
+                "type": "service_binding",
+                "binding": "management_service",
+                "function": "health"
+            },
+            "auth": false
+        },
+        {
+            "method": "GET",
+            "path": "/v1/management/health/protected",
+            "integration": {
+                "type": "service_binding",
+                "binding": "management_service",
+                "function": "healthProtected"
+            },
+            "auth": true
+        },
+        {
+            "method": "GET",
+            "path": "/v1/management/debug",
+            "integration": {
+                "type": "service_binding",
+                "binding": "management_service",
+                "function": "debug"
+            },
+            "auth": false
+        },
+        {
+            "method": "POST",
+            "path": "/v1/management/webhook/app-store",
+            "integration": {
+                "type": "service_binding",
+                "binding": "management_service",
+                "function": "appStoreWebhook"
+            },
+            "auth": false
+        },
+        {
+            "method": "POST",
+            "path": "/v1/management/webhook/sign-in-with-apple",
+            "integration": {
+                "type": "service_binding",
+                "binding": "management_service",
+                "function": "signInWithAppleWebhook"
             },
             "auth": false
         }

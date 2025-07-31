@@ -6,16 +6,6 @@ send_metrics = true
 minify = false
 workers_dev = false
 
-[vars]
-LOG_LEVEL = "DEBUG"
-ENVIRONMENT = "staging"
-SUPABASE_URL = "https://vqdpahsrwtaccjozuchj.supabase.co" 
-
-[triggers]
-crons = [
-	"* * * * *",  # Every minute - fax status polling
-]
-
 [env.staging]
 name = "sendfax-cron-staging"
 
@@ -26,6 +16,7 @@ SUPABASE_URL = "https://vqdpahsrwtaccjozuchj.supabase.co"
 
 [env.staging.observability]
 enabled = true
+head_sampling_rate = 1
 
 [env.staging.triggers]
 crons = [
@@ -36,13 +27,17 @@ crons = [
 name = "sendfax-cron-prod"
 minify = true
 
-
 [env.prod.observability]
 enabled = true
+head_sampling_rate = 1
 
 [env.prod.vars]
-LOG_LEVEL = "INFO"
+LOG_LEVEL = "DEBUG"
 ENVIRONMENT = "prod"
+SUPABASE_URL = "https://qgzzpufyjczgvvggvrhh.supabase.co"
 
-# Cron triggers for different tasks
+[env.prod.triggers]
+crons = [
+	"* * * * *",  # Every minute - fax status polling
+]
 

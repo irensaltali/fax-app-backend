@@ -20,6 +20,7 @@ name = "env-test-service-staging"
 
 [env.staging.observability]
 enabled = true
+head_sampling_rate = 1
 
 [[env.staging.r2_buckets]]
 binding = "FAX_FILES_BUCKET"
@@ -37,6 +38,7 @@ minify = true
 
 [env.prod.observability]
 enabled = true
+head_sampling_rate = 1
 
 [[env.prod.r2_buckets]]
 binding = "FAX_FILES_BUCKET"
