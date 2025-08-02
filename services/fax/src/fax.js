@@ -551,6 +551,21 @@ export default class extends WorkerEntrypoint {
 			const statusFromPayload = payload.status || null;
 			const failureReason = payload.failure_reason || null;
 			const pageCount = payload.page_count || null;
+			const toNumber = payload.to || null;
+
+			// Check if this is a fax receiving event and if the 'to' number matches our sender ID
+			const receivingEvents = ['fax.receiving.started', 'fax.media.processing.started', 'fax.received', 'fax.failed'];
+			const isReceivingEvent = receivingEvents.includes(eventType);
+			const isOurNumber = toNumber === callerEnvObj.TELNYX_SENDER_ID;
+
+			if (isReceivingEvent && isOurNumber) {
+				this.logger.log('INFO', 'Fax receiving event detected, routing to telnyxFaxReceiveWebhook', {
+					eventType,
+					toNumber,
+					senderId: callerEnvObj.TELNYX_SENDER_ID
+				});
+				return await this.telnyxFaxReceiveWebhook(body, callerEnvObj, sagContext);
+			}
 
 			if (!telnyxFaxId) {
 				this.logger.log('ERROR', 'Telnyx webhook missing fax_id in payload');
@@ -748,6 +763,70 @@ export default class extends WorkerEntrypoint {
 			return {
 				statusCode: 500,
 				error: 'Webhook processing failed',
+				message: error.message
+			};
+		}
+	}
+
+	async telnyxFaxReceiveWebhook(body, callerEnvObj, sagContext) {
+		try {
+			this.logger.log('INFO', 'Processing Telnyx fax receiving webhook');
+
+			const eventType = body?.data?.event_type || 'unknown';
+			const payload = body?.data?.payload || {};
+			const toNumber = payload.to || null;
+			const fromNumber = payload.from || null;
+			const faxId = payload.fax_id || null;
+			const status = payload.status || null;
+			const failureReason = payload.failure_reason || null;
+			const pageCount = payload.page_count || null;
+			const mediaUrl = payload.media_url || null;
+			const timestamp = body?.data?.occurred_at || new Date().toISOString();
+
+			// Log the parsed webhook data
+			this.logger.log('INFO', 'Telnyx fax receiving webhook parsed', {
+				eventType,
+				toNumber,
+				fromNumber,
+				faxId,
+				status,
+				failureReason,
+				pageCount,
+				hasMediaUrl: !!mediaUrl,
+				timestamp
+			});
+
+			// Additional detailed logging for debugging
+			this.logger.log('DEBUG', 'Telnyx fax receiving webhook full payload', {
+				eventType,
+				payload: JSON.stringify(payload),
+				rawBody: JSON.stringify(body)
+			});
+
+			return {
+				statusCode: 200,
+				message: 'Fax receiving webhook processed successfully',
+				data: {
+					eventType,
+					toNumber,
+					fromNumber,
+					faxId,
+					status,
+					failureReason,
+					pageCount,
+					hasMediaUrl: !!mediaUrl,
+					timestamp: new Date().toISOString()
+				}
+			};
+
+		} catch (error) {
+			this.logger.log('ERROR', 'Error processing Telnyx fax receiving webhook', {
+				error: error.message,
+				stack: error.stack
+			});
+			return {
+				statusCode: 500,
+				error: 'Fax receiving webhook processing failed',
 				message: error.message
 			};
 		}
