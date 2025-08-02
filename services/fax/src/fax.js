@@ -774,6 +774,7 @@ export default class extends WorkerEntrypoint {
 
 			const eventType = body?.data?.event_type || 'unknown';
 			const payload = body?.data?.payload || {};
+			const webhookId = body?.data?.id || null;
 			const toNumber = payload.to || null;
 			const fromNumber = payload.from || null;
 			const faxId = payload.fax_id || null;
@@ -783,9 +784,87 @@ export default class extends WorkerEntrypoint {
 			const mediaUrl = payload.media_url || null;
 			const timestamp = body?.data?.occurred_at || new Date().toISOString();
 
+			// Check if this is a fax.received event with media_url
+			if (eventType === 'fax.received' && mediaUrl) {
+				this.logger.log('INFO', 'Processing fax.received event with media', {
+					eventType,
+					webhookId,
+					fromNumber,
+					pageCount,
+					hasMediaUrl: !!mediaUrl
+				});
+
+				// Download and upload the fax file to R2
+				const r2Utils = new R2Utils(this.logger, this.env);
+				
+				if (!r2Utils.validateConfiguration()) {
+					throw new Error('R2 configuration invalid for fax receiving');
+				}
+
+				try {
+					// Download the fax file from Telnyx
+					this.logger.log('INFO', 'Downloading fax file from Telnyx', { mediaUrl });
+					
+					const response = await fetch(mediaUrl);
+					if (!response.ok) {
+						throw new Error(`Failed to download fax file: ${response.status} ${response.statusText}`);
+					}
+
+					const fileBuffer = await response.arrayBuffer();
+					
+					// Generate filename for R2 storage
+					const timestamp = Date.now();
+					const filename = `received/${timestamp}_${webhookId}.pdf`;
+					
+					// Upload to R2
+					this.logger.log('INFO', 'Uploading fax file to R2', { filename });
+					const r2MediaUrl = await r2Utils.uploadFile(filename, fileBuffer, 'application/pdf');
+					
+					this.logger.log('INFO', 'Fax file uploaded to R2 successfully', { 
+						filename, 
+						r2MediaUrl,
+						originalMediaUrl: mediaUrl
+					});
+
+					// Save to database
+					const receivedFaxData = {
+						webhookId: webhookId,
+						fromNumber: fromNumber,
+						pageCount: pageCount || 1,
+						mediaUrl: r2MediaUrl,
+						originalMediaUrl: mediaUrl,
+						receivedAt: new Date().toISOString()
+					};
+
+					const savedRecord = await DatabaseUtils.saveReceivedFax(receivedFaxData, callerEnvObj, this.logger);
+					
+					if (savedRecord) {
+						this.logger.log('INFO', 'Received fax record saved to database', {
+							recordId: savedRecord.id,
+							webhookId: savedRecord.webhook_id
+						});
+					} else {
+						this.logger.log('ERROR', 'Failed to save received fax record to database');
+					}
+
+				} catch (downloadError) {
+					this.logger.log('ERROR', 'Failed to process fax file', {
+						error: downloadError.message,
+						mediaUrl
+					});
+					// Continue processing even if file download/upload fails
+				}
+			} else {
+				this.logger.log('INFO', 'Skipping fax processing - not a fax.received event or no media URL', {
+					eventType,
+					hasMediaUrl: !!mediaUrl
+				});
+			}
+
 			// Log the parsed webhook data
-			this.logger.log('INFO', 'Telnyx fax receiving webhook parsed', {
+			this.logger.log('INFO', 'Telnyx fax receiving webhook processed', {
 				eventType,
+				webhookId,
 				toNumber,
 				fromNumber,
 				faxId,
@@ -796,18 +875,12 @@ export default class extends WorkerEntrypoint {
 				timestamp
 			});
 
-			// Additional detailed logging for debugging
-			this.logger.log('DEBUG', 'Telnyx fax receiving webhook full payload', {
-				eventType,
-				payload: JSON.stringify(payload),
-				rawBody: JSON.stringify(body)
-			});
-
 			return {
 				statusCode: 200,
 				message: 'Fax receiving webhook processed successfully',
 				data: {
 					eventType,
+					webhookId,
 					toNumber,
 					fromNumber,
 					faxId,
@@ -827,6 +900,57 @@ export default class extends WorkerEntrypoint {
 			return {
 				statusCode: 500,
 				error: 'Fax receiving webhook processing failed',
+				message: error.message
+			};
+		}
+	}
+
+	/**
+	 * Get all received faxes from the last 24 hours (unauthenticated endpoint)
+	 * @param {Request} request - The HTTP request
+	 * @param {Object} caller_env - Environment variables
+	 * @param {Object} sagContext - Serverless API Gateway context
+	 * @returns {Promise<Object>} Response object
+	 */
+	async getReceivedFaxesLast24Hours(request, caller_env = "{}", sagContext = "{}") {
+		try {
+			this.logger.log('INFO', 'Received request to get received faxes from last 24 hours');
+
+			// Parse environment variables
+			const callerEnvObj = typeof caller_env === 'string' ? JSON.parse(caller_env) : caller_env;
+
+			// Get received faxes from the last 24 hours
+			const result = await FaxDatabaseUtils.getReceivedFaxesLast24Hours(callerEnvObj, this.logger);
+
+			if (!result.success) {
+				this.logger.log('ERROR', 'Failed to fetch received faxes', {
+					error: result.error
+				});
+				return {
+					statusCode: 500,
+					error: 'Failed to fetch received faxes',
+					message: result.error
+				};
+			}
+
+			this.logger.log('INFO', 'Successfully retrieved received faxes', {
+				count: result.count
+			});
+
+			return {
+				statusCode: 200,
+				message: 'Received faxes retrieved successfully',
+				data: result.faxes
+			};
+
+		} catch (error) {
+			this.logger.log('ERROR', 'Error in getReceivedFaxesLast24Hours endpoint', {
+				error: error.message,
+				stack: error.stack
+			});
+			return {
+				statusCode: 500,
+				error: 'Internal server error',
 				message: error.message
 			};
 		}

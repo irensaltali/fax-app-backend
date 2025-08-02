@@ -33,7 +33,8 @@
             "https://sendfax.pro",
             "https://api-staging.sendfax.pro",
             "https://api.sendfax.pro",
-            "https://send-fax-staging.irensaltali.workers.dev/"
+            "https://send-fax-staging.irensaltali.workers.dev/",
+            "http://localhost:3000"
         ],
         "allow_methods": [
             "GET",
@@ -128,6 +129,16 @@
                 "type": "service_binding",
                 "binding": "fax_service",
                 "function": "telnyxWebhook"
+            },
+            "auth": false
+        },
+        {
+            "method": "GET",
+            "path": "/v1/fax/received/last-24-hours",
+            "integration": {
+                "type": "service_binding",
+                "binding": "fax_service",
+                "function": "getReceivedFaxesLast24Hours"
             },
             "auth": false
         },

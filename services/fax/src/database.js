@@ -34,6 +34,9 @@ export class DatabaseUtils {
 				friendlyId: faxData.friendlyId || null
 			};
 
+			// Check if the sender number is in our own numbers table
+			const isFromMobileApp = await FaxDatabaseUtils.isOwnNumber(faxData.senderId, env, logger);
+
 			const faxRecord = {
 				user_id: userId,
 				status: faxData.status || 'queued',
@@ -48,7 +51,8 @@ export class DatabaseUtils {
 				completed_at: faxData.completedAt || null,
 				error_message: faxData.errorMessage || null,
 				metadata: metadata,
-				provider_fax_id: faxData.providerFaxId || faxData.id || null
+				provider_fax_id: faxData.providerFaxId || faxData.id || null,
+				is_from_mobile_app: isFromMobileApp
 			};
 
 			const { data: recordedFaxData, error } = await supabase
@@ -297,6 +301,61 @@ export class DatabaseUtils {
 			logger.log('ERROR', 'Error recording usage', {
 				error: error.message,
 				usageData
+			});
+			return null;
+		}
+	}
+
+	static async saveReceivedFax(receivedFaxData, env, logger) {
+		try {
+			if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+				logger.log('WARN', 'Supabase not configured, skipping received fax save');
+				return null;
+			}
+
+			const supabase = this.getSupabaseAdminClient(env);
+
+			// Check if the sender number is in our own numbers table
+			const isFromMobileApp = await FaxDatabaseUtils.isOwnNumber(receivedFaxData.fromNumber, env, logger);
+
+			const receivedFaxRecord = {
+				webhook_id: receivedFaxData.webhookId,
+				from_number: receivedFaxData.fromNumber,
+				page_count: receivedFaxData.pageCount || 1,
+				media_url: receivedFaxData.mediaUrl,
+				original_media_url: receivedFaxData.originalMediaUrl || null,
+				received_at: receivedFaxData.receivedAt || new Date().toISOString(),
+				is_from_mobile_app: isFromMobileApp
+			};
+
+			const { data: recordedReceivedFax, error } = await supabase
+				.from('free_fax_receives')
+				.insert(receivedFaxRecord)
+				.select()
+				.single();
+
+			if (error) {
+				logger.log('ERROR', 'Failed to save received fax record to database', {
+					error: error.message,
+					code: error.code,
+					webhookId: receivedFaxData.webhookId
+				});
+				throw error;
+			}
+
+			logger.log('INFO', 'Received fax record saved successfully to database', {
+				recordId: recordedReceivedFax.id,
+				webhookId: recordedReceivedFax.webhook_id,
+				fromNumber: recordedReceivedFax.from_number,
+				pageCount: recordedReceivedFax.page_count
+			});
+
+			return recordedReceivedFax;
+
+		} catch (error) {
+			logger.log('ERROR', 'Error saving received fax record to database', {
+				error: error.message,
+				webhookId: receivedFaxData?.webhookId
 			});
 			return null;
 		}
@@ -589,6 +648,122 @@ export class FaxDatabaseUtils {
 				error: error.message,
 				totalPages: 0,
 				faxCount: 0
+			};
+		}
+	}
+
+	/**
+	 * Check if a phone number is in our own numbers table
+	 * @param {string} phoneNumber - Phone number to check (e.g., +1234567890)
+	 * @param {Object} env - Environment variables
+	 * @param {Object} logger - Logger instance
+	 * @returns {Promise<boolean>} True if the number is in our own numbers table
+	 */
+	static async isOwnNumber(phoneNumber, env, logger) {
+		try {
+			if (!phoneNumber) {
+				return false;
+			}
+
+			const supabase = this.getSupabaseAdminClient(env);
+
+			// Check if the phone number exists in our own_numbers table
+			const { data: ownNumber, error } = await supabase
+				.from('own_numbers')
+				.select('id')
+				.eq('phone_number', phoneNumber)
+				.eq('is_active', true)
+				.single();
+
+			if (error) {
+				if (error.code === 'PGRST116') {
+					// No rows returned - number not found
+					return false;
+				}
+				logger.log('ERROR', 'Failed to check own number', {
+					error: error.message,
+					phoneNumber: phoneNumber
+				});
+				return false;
+			}
+
+			return !!ownNumber;
+
+		} catch (error) {
+			logger.log('ERROR', 'Error checking own number', {
+				error: error.message,
+				phoneNumber: phoneNumber
+			});
+			return false;
+		}
+	}
+
+	/**
+	 * Get all received faxes from the last 24 hours
+	 * @param {Object} env - Environment variables
+	 * @param {Object} logger - Logger instance
+	 * @returns {Promise<Object>} List of received faxes
+	 */
+	static async getReceivedFaxesLast24Hours(env, logger) {
+		try {
+			if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+				logger.log('WARN', 'Supabase not configured, cannot fetch received faxes');
+				return {
+					success: false,
+					error: 'Database not configured',
+					faxes: []
+				};
+			}
+
+			const supabase = this.getSupabaseAdminClient(env);
+
+			// Calculate 24 hours ago
+			const twentyFourHoursAgo = new Date();
+			twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
+
+			// Get received faxes from the last 24 hours
+			const { data: faxes, error } = await supabase
+				.from('free_fax_receives')
+				.select(`
+					id,
+					from_number,
+					page_count,
+					media_url,
+					received_at,
+					is_from_mobile_app,
+					created_at
+				`)
+				.gte('received_at', twentyFourHoursAgo.toISOString())
+				.order('received_at', { ascending: false });
+
+			if (error) {
+				logger.log('ERROR', 'Failed to fetch received faxes', {
+					error: error.message
+				});
+				return {
+					success: false,
+					error: error.message,
+					faxes: []
+				};
+			}
+
+			logger.log('INFO', 'Successfully fetched received faxes from last 24 hours', {
+				count: faxes.length
+			});
+
+			return {
+				success: true,
+				faxes: faxes
+			};
+
+		} catch (error) {
+			logger.log('ERROR', 'Error fetching received faxes', {
+				error: error.message
+			});
+			return {
+				success: false,
+				error: error.message,
+				faxes: []
 			};
 		}
 	}
