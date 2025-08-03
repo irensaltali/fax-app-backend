@@ -33,8 +33,8 @@
             "https://sendfax.pro",
             "https://api-staging.sendfax.pro",
             "https://api.sendfax.pro",
-            "https://send-fax-staging.irensaltali.workers.dev/",
-            "http://localhost:3000"
+            "http://localhost:3000",
+            "https://*.fax-app-landing.pages.dev"
         ],
         "allow_methods": [
             "GET",
