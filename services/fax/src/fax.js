@@ -540,7 +540,7 @@ export default class extends WorkerEntrypoint {
 			// Ensure caller_env is an object for downstream DB utils
 			const callerEnvObj = typeof caller_env === 'string' ? JSON.parse(caller_env || '{}') : (caller_env || {});
 
-			this.logger.log('INFO', 'Telnyx webhook received');
+			this.logger.log('INFO', 'Telnyx webhook received (sending events only)');
 
 			// Parse JSON body safely
 			const body = await request.json();
@@ -559,14 +559,16 @@ export default class extends WorkerEntrypoint {
 			const isOurNumber = toNumber === callerEnvObj.TELNYX_SENDER_ID;
 
 			if (isReceivingEvent && isOurNumber) {
-				this.logger.log('INFO', 'Fax receiving event detected, routing to telnyxFaxReceiveWebhook', {
+				this.logger.log('INFO', 'Fax receiving event detected in main webhook, redirecting to public receive endpoint', {
 					eventType,
 					toNumber,
 					senderId: callerEnvObj.TELNYX_SENDER_ID
 				});
-				return await this.telnyxFaxReceiveWebhook(body, callerEnvObj, sagContext);
+				// Redirect receiving events to the public endpoint
+				return await this.telnyxFaxReceiveWebhook(request, caller_env, sagContext);
 			}
 
+			// Only process sending-related events in this webhook
 			if (!telnyxFaxId) {
 				this.logger.log('ERROR', 'Telnyx webhook missing fax_id in payload');
 				return { statusCode: 400, error: 'Invalid webhook payload: missing fax_id' };
@@ -768,9 +770,15 @@ export default class extends WorkerEntrypoint {
 		}
 	}
 
-	async telnyxFaxReceiveWebhook(body, callerEnvObj, sagContext) {
+	async telnyxFaxReceiveWebhook(request, caller_env = "{}", sagContext = "{}") {
 		try {
-			this.logger.log('INFO', 'Processing Telnyx fax receiving webhook');
+			// Ensure caller_env is an object for downstream DB utils
+			const callerEnvObj = typeof caller_env === 'string' ? JSON.parse(caller_env || '{}') : (caller_env || {});
+
+			this.logger.log('INFO', 'Processing Telnyx fax receiving webhook (public endpoint)');
+
+			// Parse JSON body safely
+			const body = await request.json();
 
 			const eventType = body?.data?.event_type || 'unknown';
 			const payload = body?.data?.payload || {};
@@ -833,7 +841,8 @@ export default class extends WorkerEntrypoint {
 						pageCount: pageCount || 1,
 						mediaUrl: r2MediaUrl,
 						originalMediaUrl: mediaUrl,
-						receivedAt: new Date().toISOString()
+						receivedAt: new Date().toISOString(),
+						provider: 'telnyx'
 					};
 
 					const savedRecord = await DatabaseUtils.saveReceivedFax(receivedFaxData, callerEnvObj, this.logger);
@@ -905,6 +914,187 @@ export default class extends WorkerEntrypoint {
 		}
 	}
 
+
+
+	/**
+	 * General fax receiving webhook (public endpoint) - handles any provider
+	 * @param {Request} request - The HTTP request
+	 * @param {Object} caller_env - Environment variables
+	 * @param {Object} sagContext - Serverless API Gateway context
+	 * @returns {Promise<Object>} Response object
+	 */
+	async generalFaxReceiveWebhook(request, caller_env = "{}", sagContext = "{}") {
+		try {
+			// Ensure caller_env is an object for downstream DB utils
+			const callerEnvObj = typeof caller_env === 'string' ? JSON.parse(caller_env || '{}') : (caller_env || {});
+
+			this.logger.log('INFO', 'Processing general fax receiving webhook (public endpoint)');
+
+			// Parse JSON body safely
+			const body = await request.json();
+
+			// Try to detect the provider from the webhook payload structure
+			let provider = 'unknown';
+			let eventType = 'unknown';
+			let payload = {};
+			let webhookId = null;
+			let fromNumber = null;
+			let toNumber = null;
+			let faxId = null;
+			let status = null;
+			let pageCount = null;
+			let mediaUrl = null;
+			let timestamp = new Date().toISOString();
+
+			// Detect Telnyx webhook format
+			if (body?.data?.event_type) {
+				provider = 'telnyx';
+				eventType = body.data.event_type;
+				payload = body.data.payload || {};
+				webhookId = body.data.id;
+				fromNumber = payload.from;
+				toNumber = payload.to;
+				faxId = payload.fax_id;
+				status = payload.status;
+				pageCount = payload.page_count;
+				mediaUrl = payload.media_url;
+				timestamp = body.data.occurred_at || timestamp;
+			}
+
+
+			this.logger.log('INFO', 'Detected provider from webhook payload', {
+				provider,
+				eventType,
+				hasMediaUrl: !!mediaUrl
+			});
+
+			// Check if this is a fax receiving event with media
+			const receivingEvents = ['fax.received', 'fax.receiving.started', 'fax.media.processing.started'];
+			if (receivingEvents.includes(eventType) && mediaUrl) {
+				this.logger.log('INFO', 'Processing fax receiving event with media', {
+					provider,
+					eventType,
+					webhookId,
+					fromNumber,
+					pageCount,
+					hasMediaUrl: !!mediaUrl
+				});
+
+				// Download and upload the fax file to R2
+				const r2Utils = new R2Utils(this.logger, this.env);
+				
+				if (!r2Utils.validateConfiguration()) {
+					throw new Error('R2 configuration invalid for fax receiving');
+				}
+
+				try {
+					// Download the fax file from provider
+					this.logger.log('INFO', 'Downloading fax file from provider', { mediaUrl, provider });
+					
+					const response = await fetch(mediaUrl);
+					if (!response.ok) {
+						throw new Error(`Failed to download fax file: ${response.status} ${response.statusText}`);
+					}
+
+					const fileBuffer = await response.arrayBuffer();
+					
+					// Generate filename for R2 storage
+					const timestamp = Date.now();
+					const filename = `received/${provider}_${timestamp}_${webhookId}.pdf`;
+					
+					// Upload to R2
+					this.logger.log('INFO', 'Uploading fax file to R2', { filename });
+					const r2MediaUrl = await r2Utils.uploadFile(filename, fileBuffer, 'application/pdf');
+					
+					this.logger.log('INFO', 'Fax file uploaded to R2 successfully', { 
+						filename, 
+						r2MediaUrl,
+						originalMediaUrl: mediaUrl
+					});
+
+					// Save to database
+					const receivedFaxData = {
+						webhookId: webhookId,
+						fromNumber: fromNumber,
+						pageCount: pageCount || 1,
+						mediaUrl: r2MediaUrl,
+						originalMediaUrl: mediaUrl,
+						receivedAt: new Date().toISOString(),
+						provider: provider
+					};
+
+					const savedRecord = await DatabaseUtils.saveReceivedFax(receivedFaxData, callerEnvObj, this.logger);
+					
+					if (savedRecord) {
+						this.logger.log('INFO', 'Received fax record saved to database', {
+							recordId: savedRecord.id,
+							webhookId: savedRecord.webhook_id,
+							provider
+						});
+					} else {
+						this.logger.log('ERROR', 'Failed to save received fax record to database');
+					}
+
+				} catch (downloadError) {
+					this.logger.log('ERROR', 'Failed to process fax file', {
+						error: downloadError.message,
+						mediaUrl,
+						provider
+					});
+					// Continue processing even if file download/upload fails
+				}
+			} else {
+				this.logger.log('INFO', 'Skipping fax processing - not a receiving event or no media URL', {
+					provider,
+					eventType,
+					hasMediaUrl: !!mediaUrl
+				});
+			}
+
+			// Log the parsed webhook data
+			this.logger.log('INFO', 'General fax receiving webhook processed', {
+				provider,
+				eventType,
+				webhookId,
+				toNumber,
+				fromNumber,
+				faxId,
+				status,
+				pageCount,
+				hasMediaUrl: !!mediaUrl,
+				timestamp
+			});
+
+			return {
+				statusCode: 200,
+				message: 'General fax receiving webhook processed successfully',
+				data: {
+					provider,
+					eventType,
+					webhookId,
+					toNumber,
+					fromNumber,
+					faxId,
+					status,
+					pageCount,
+					hasMediaUrl: !!mediaUrl,
+					timestamp: new Date().toISOString()
+				}
+			};
+
+		} catch (error) {
+			this.logger.log('ERROR', 'Error processing general fax receiving webhook', {
+				error: error.message,
+				stack: error.stack
+			});
+			return {
+				statusCode: 500,
+				error: 'General fax receiving webhook processing failed',
+				message: error.message
+			};
+		}
+	}
+
 	/**
 	 * Get all received faxes from the last 24 hours (unauthenticated endpoint)
 	 * @param {Request} request - The HTTP request
@@ -933,14 +1123,31 @@ export default class extends WorkerEntrypoint {
 				};
 			}
 
-			this.logger.log('INFO', 'Successfully retrieved received faxes', {
+			// Mask phone numbers in the response for privacy
+			const maskedFaxes = result.faxes.map(fax => {
+				const maskedFax = { ...fax };
+				
+				// Mask from_number if it exists
+				if (maskedFax.from_number) {
+					maskedFax.from_number = this.maskPhoneNumber(maskedFax.from_number);
+				}
+				
+				// Mask to_number if it exists
+				if (maskedFax.to_number) {
+					maskedFax.to_number = this.maskPhoneNumber(maskedFax.to_number);
+				}
+				
+				return maskedFax;
+			});
+
+			this.logger.log('INFO', 'Successfully retrieved received faxes with masked phone numbers', {
 				count: result.count
 			});
 
 			return {
 				statusCode: 200,
 				message: 'Received faxes retrieved successfully',
-				data: result.faxes
+				data: maskedFaxes
 			};
 
 		} catch (error) {
@@ -954,5 +1161,41 @@ export default class extends WorkerEntrypoint {
 				message: error.message
 			};
 		}
+	}
+
+	/**
+	 * Mask a phone number for privacy (shows only last 4 digits)
+	 * @param {string} phoneNumber - The phone number to mask
+	 * @returns {string} Masked phone number
+	 */
+	maskPhoneNumber(phoneNumber) {
+		if (!phoneNumber || typeof phoneNumber !== 'string') {
+			return phoneNumber;
+		}
+
+		// Remove all non-digit characters
+		const digits = phoneNumber.replace(/\D/g, '');
+		
+		if (digits.length < 4) {
+			return phoneNumber; // Return original if too short
+		}
+
+		// Keep the last 4 digits and mask the rest with asterisks
+		const lastFour = digits.slice(-4);
+		const maskedPart = '*'.repeat(Math.max(0, digits.length - 4));
+		
+		// Format with original structure (preserve +, -, etc.)
+		if (phoneNumber.startsWith('+')) {
+			return `+${maskedPart}${lastFour}`;
+		} else if (phoneNumber.includes('-')) {
+			// Try to preserve some formatting
+			const parts = phoneNumber.split('-');
+			if (parts.length >= 2) {
+				return `${'*'.repeat(parts[0].length)}-${'*'.repeat(parts[1].length)}-${lastFour}`;
+			}
+		}
+		
+		// Default format
+		return `${maskedPart}${lastFour}`;
 	}
 }

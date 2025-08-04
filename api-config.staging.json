@@ -133,6 +133,16 @@
             "auth": false
         },
         {
+            "method": "POST",
+            "path": "/v1/fax/receive/telnyx",
+            "integration": {
+                "type": "service_binding",
+                "binding": "fax_service",
+                "function": "telnyxFaxReceiveWebhook"
+            },
+            "auth": false
+        },
+        {
             "method": "GET",
             "path": "/v1/fax/received/last-24-hours",
             "integration": {
