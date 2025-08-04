@@ -22,6 +22,7 @@ name = "fax-service-staging"
 enabled = true
 
 [env.staging.vars]
+ENVIRONMENT = "staging"
 LOG_LEVEL = "DEBUG"
 FAX_FILES_BUCKET_PUBLIC_URL = "https://r2-staging.sendfax.pro"
 TELNYX_CONNECTION_ID = "2740858224415605884"
@@ -41,6 +42,7 @@ enabled = true
 head_sampling_rate = 1
 
 [env.prod.vars]
+ENVIRONMENT = "prod"
 LOG_LEVEL = "DEBUG"
 FAX_FILES_BUCKET_PUBLIC_URL = "https://r2.sendfax.pro"
 TELNYX_CONNECTION_ID = "2740858224415605884"

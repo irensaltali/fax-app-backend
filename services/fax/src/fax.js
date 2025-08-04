@@ -852,6 +852,23 @@ export default class extends WorkerEntrypoint {
 							recordId: savedRecord.id,
 							webhookId: savedRecord.webhook_id
 						});
+
+						// Check if we're in production environment before sending Slack notification
+						const environment = callerEnvObj.ENVIRONMENT || this.env.ENVIRONMENT;
+						
+						if (environment === 'prod') {
+							// Send Slack notification for successful fax receive in production
+							await this.sendSlackNotificationForSuccessfulFaxReceive(
+								callerEnvObj,
+								{
+									fromNumber,
+									pageCount,
+									webhookId: savedRecord.webhook_id,
+									recordId: savedRecord.id,
+									provider: 'telnyx'
+								}
+							);
+						}
 					} else {
 						this.logger.log('ERROR', 'Failed to save received fax record to database');
 					}
@@ -1031,6 +1048,23 @@ export default class extends WorkerEntrypoint {
 							webhookId: savedRecord.webhook_id,
 							provider
 						});
+
+						// Check if we're in production environment before sending Slack notification
+						const environment = callerEnvObj.ENVIRONMENT || this.env.ENVIRONMENT;
+						
+						if (environment === 'prod') {
+							// Send Slack notification for successful fax receive in production
+							await this.sendSlackNotificationForSuccessfulFaxReceive(
+								callerEnvObj,
+								{
+									fromNumber,
+									pageCount,
+									webhookId: savedRecord.webhook_id,
+									recordId: savedRecord.id,
+									provider: provider
+								}
+							);
+						}
 					} else {
 						this.logger.log('ERROR', 'Failed to save received fax record to database');
 					}
@@ -1197,5 +1231,201 @@ export default class extends WorkerEntrypoint {
 		
 		// Default format
 		return `${maskedPart}${lastFour}`;
+	}
+
+	/**
+	 * Get country code from phone number
+	 * @param {string} phoneNumber - The phone number
+	 * @returns {string} Country code or 'Unknown'
+	 */
+	getCountryCode(phoneNumber) {
+		if (!phoneNumber || typeof phoneNumber !== 'string') {
+			return 'Unknown';
+		}
+
+		// Remove all non-digit characters except +
+		const cleanNumber = phoneNumber.replace(/[^\d+]/g, '');
+		
+		// Common country code patterns
+		const countryCodes = {
+			'1': 'US/Canada',
+			'44': 'UK',
+			'33': 'France',
+			'49': 'Germany',
+			'39': 'Italy',
+			'34': 'Spain',
+			'31': 'Netherlands',
+			'32': 'Belgium',
+			'46': 'Sweden',
+			'47': 'Norway',
+			'45': 'Denmark',
+			'358': 'Finland',
+			'48': 'Poland',
+			'420': 'Czech Republic',
+			'36': 'Hungary',
+			'43': 'Austria',
+			'41': 'Switzerland',
+			'61': 'Australia',
+			'64': 'New Zealand',
+			'81': 'Japan',
+			'82': 'South Korea',
+			'86': 'China',
+			'91': 'India',
+			'971': 'UAE',
+			'966': 'Saudi Arabia',
+			'972': 'Israel',
+			'90': 'Turkey',
+			'7': 'Russia',
+			'55': 'Brazil',
+			'54': 'Argentina',
+			'56': 'Chile',
+			'57': 'Colombia',
+			'58': 'Venezuela',
+			'593': 'Ecuador',
+			'51': 'Peru',
+			'52': 'Mexico',
+			'27': 'South Africa',
+			'234': 'Nigeria',
+			'254': 'Kenya',
+			'256': 'Uganda',
+			'255': 'Tanzania'
+		};
+
+		// Check for country codes starting with +
+		if (cleanNumber.startsWith('+')) {
+			const numberWithoutPlus = cleanNumber.substring(1);
+			
+			// Check 3-digit codes first
+			if (numberWithoutPlus.length >= 3) {
+				const code3 = numberWithoutPlus.substring(0, 3);
+				if (countryCodes[code3]) {
+					return countryCodes[code3];
+				}
+			}
+			
+			// Check 2-digit codes
+			if (numberWithoutPlus.length >= 2) {
+				const code2 = numberWithoutPlus.substring(0, 2);
+				if (countryCodes[code2]) {
+					return countryCodes[code2];
+				}
+			}
+			
+			// Check 1-digit codes
+			if (numberWithoutPlus.length >= 1) {
+				const code1 = numberWithoutPlus.substring(0, 1);
+				if (countryCodes[code1]) {
+					return countryCodes[code1];
+				}
+			}
+		}
+		
+		// If no + prefix, assume US/Canada (1)
+		if (cleanNumber.length >= 10 && cleanNumber.startsWith('1')) {
+			return 'US/Canada';
+		}
+		
+		return 'Unknown';
+	}
+
+	/**
+	 * Send Slack notification for successful fax receive in production
+	 * @param {Object} callerEnvObj - Caller environment object
+	 * @param {Object} faxData - Fax data object
+	 * @returns {Promise<void>}
+	 */
+	async sendSlackNotificationForSuccessfulFaxReceive(callerEnvObj, faxData) {
+		try {
+			// Check if Slack webhook URL is configured
+			const slackWebhookUrl = callerEnvObj.SLACK_PUBLIC_RECEIVE_WEBHOOK;
+			
+			if (!slackWebhookUrl) {
+				this.logger.log('WARN', 'Slack webhook URL not configured for fax receive notifications', {
+					environment: callerEnvObj.ENVIRONMENT || this.env.ENVIRONMENT
+				});
+				return;
+			}
+
+			// Get country code and check if it's from own numbers
+			const countryCode = this.getCountryCode(faxData.fromNumber);
+			const isFromOwnNumbers = await FaxDatabaseUtils.isOwnNumber(faxData.fromNumber, callerEnvObj, this.logger);
+			
+			// Prepare Slack message
+			const maskedFromNumber = this.maskPhoneNumber(faxData.fromNumber);
+			const timestamp = new Date().toISOString();
+			
+			const slackMessage = {
+				text: `📠 *New Fax Received*`,
+				blocks: [
+					{
+						type: "header",
+						text: {
+							type: "plain_text",
+							text: "📠 New Public Fax Received",
+							emoji: true
+						}
+					},
+					{
+						type: "section",
+						fields: [
+							{
+								type: "mrkdwn",
+								text: `*From:*\n${maskedFromNumber}`
+							},
+							{
+								type: "mrkdwn",
+								text: `*Country:*\n${countryCode}`
+							},
+							{
+								type: "mrkdwn",
+								text: `*Pages:*\n${faxData.pageCount || 1}`
+							},
+							{
+								type: "mrkdwn",
+								text: `*Own Number:*\n${isFromOwnNumbers ? 'Yes' : 'No'}`
+							}
+						]
+					},
+					{
+						type: "context",
+						elements: [
+							{
+								type: "mrkdwn",
+								text: `Received at ${timestamp}`
+							}
+						]
+					}
+				]
+			};
+
+			// Send to Slack
+			const response = await fetch(slackWebhookUrl, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify(slackMessage)
+			});
+
+			if (response.ok) {
+				this.logger.log('INFO', 'Slack notification sent successfully for fax receive', {
+					recordId: faxData.recordId,
+					webhookId: faxData.webhookId
+				});
+			} else {
+				this.logger.log('ERROR', 'Failed to send Slack notification', {
+					status: response.status,
+					statusText: response.statusText,
+					recordId: faxData.recordId
+				});
+			}
+
+		} catch (error) {
+			this.logger.log('ERROR', 'Error sending Slack notification for fax receive', {
+				error: error.message,
+				recordId: faxData.recordId
+			});
+			// Don't throw error - we don't want Slack notification failures to break fax processing
+		}
 	}
 }
